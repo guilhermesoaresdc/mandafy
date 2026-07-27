@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+.env
+.env.local
+.env.*.local
+!.env.example
+
+*.log
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+coverage/
+.vitest/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# volumes locais do docker compose
+.docker-data/
