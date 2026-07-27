@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: Typecheck, lint, testes e build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Testes
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          BUILD_STANDALONE: '1'
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  migrations:
+    name: Migrations aplicam num Postgres limpo
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mandafy
+          POSTGRES_PASSWORD: mandafy
+          POSTGRES_DB: mandafy
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mandafy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Vale mais que qualquer teste unitário do schema: prova que o SQL
+      # escrito à mão aplica de ponta a ponta, com partições e RLS.
+      - name: Aplicar migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
+
+      - name: Aplicar de novo — precisa ser idempotente
+        run: npm run db:migrate
+        env:
+          DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
+
+      - name: Popular dados iniciais
+        run: npm run db:seed
+        env:
+          DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
+          SEED_ADMIN_EMAIL: admin@mandafy.local
+          SEED_ADMIN_PASSWORD: senha-de-teste-ci
+
+      - name: Seed roda duas vezes sem duplicar
+        run: npm run db:seed
+        env:
+          DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
+          SEED_ADMIN_EMAIL: admin@mandafy.local
+          SEED_ADMIN_PASSWORD: senha-de-teste-ci

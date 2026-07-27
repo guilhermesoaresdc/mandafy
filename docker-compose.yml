@@ -1,0 +1,134 @@
+# Mandafy — VPS único com Docker Compose (§2.1).
+#
+# Um host só: elimina latência de rede entre as peças, elimina cold start, e o
+# custo fica fixo e previsível. A Evolution API é obrigatoriamente self-hosted
+# (roda sobre o protocolo do WhatsApp Web), então o VPS existe de qualquer jeito.
+#
+# Nenhum segredo literal aqui: tudo vem do .env.
+# Postgres, Redis e Evolution NÃO publicam portas no host — só o
+# docker-compose.override.yml (desenvolvimento) faz isso, e em 127.0.0.1.
+
+name: mandafy
+
+x-app-base: &app-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  restart: unless-stopped
+  env_file: [.env]
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: ${DATABASE_URL}
+    DATABASE_URL_ADMIN: ${DATABASE_URL_ADMIN}
+    REDIS_URL: ${REDIS_URL}
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  networks: [mandafy]
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [app]
+    networks: [mandafy]
+
+  app:
+    <<: *app-base
+    command: ['node', 'server.js']
+    expose: ['3000']
+
+  worker:
+    <<: *app-base
+    command: ['npm', 'run', 'worker']
+    # O worker não atende HTTP: o healthcheck da imagem não se aplica a ele.
+    healthcheck:
+      disable: true
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mandafy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mandafy}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-mandafy_app}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-mandafy} -d ${POSTGRES_DB:-mandafy}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [mandafy]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly: os jobs agendados sobrevivem a um reinício. Um "PIX
+    # abandonado" de 20 horas não pode sumir porque o container reiniciou.
+    command: ['redis-server', '--appendonly', 'yes', '--save', '60', '1']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [mandafy]
+
+  evolution:
+    # Tag FIXA, nunca :latest — o formato do payload mudou entre v1 e v2 e isso
+    # quebra a integração silenciosamente (§8.2).
+    image: evoapicloud/evolution-api:v2.2.3
+    restart: unless-stopped
+    environment:
+      SERVER_URL: ${EVOLUTION_URL:-http://evolution:8080}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_GLOBAL_APIKEY:?defina EVOLUTION_GLOBAL_APIKEY no .env}
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-mandafy}:${POSTGRES_PASSWORD}@postgres:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: mandafy
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: 'false'
+      # Só os eventos que o Mandafy consome (§8.2).
+      WEBHOOK_GLOBAL_ENABLED: 'true'
+      WEBHOOK_GLOBAL_URL: ${APP_URL}/api/webhooks/evolution
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: 'true'
+      WEBHOOK_EVENTS_MESSAGES_UPDATE: 'true'
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: 'true'
+      WEBHOOK_EVENTS_SEND_MESSAGE: 'true'
+      LOG_LEVEL: ERROR
+    volumes:
+      - evolution-instances:/evolution/instances
+    expose: ['8080']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [mandafy]
+
+volumes:
+  postgres-data:
+  redis-data:
+  evolution-instances:
+  caddy-data:
+  caddy-config:
+
+networks:
+  mandafy:
+    driver: bridge

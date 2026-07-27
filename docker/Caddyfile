@@ -1,0 +1,47 @@
+# Caddy: proxy reverso com TLS automático.
+#
+# {$CADDY_DOMAIN} vem do .env. Em `localhost` o Caddy usa um certificado local
+# e não tenta emitir nada pela ACME.
+
+{
+	email {$CADDY_EMAIL}
+	# Sem servir a versão do Caddy em cabeçalho de erro.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$CADDY_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+	}
+
+	# HSTS só fora de localhost: em desenvolvimento ele tranca o navegador em
+	# https e atrapalha o resto do dia.
+	@nao_local not host localhost 127.0.0.1
+	header @nao_local Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Webhooks de entrada das plataformas de sorteio (§4.3).
+	# Sem cache e sem buffer: o alvo é responder em menos de 50 ms.
+	@ingest path /in/*
+	handle @ingest {
+		header Cache-Control "no-store"
+		reverse_proxy app:3000
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+
+	# Log em JSON, SEM corpo de requisição: webhooks carregam nome, telefone e
+	# e-mail, e nada disso pode ir para log de aplicação (§14.1).
+	log {
+		output stdout
+		format json
+	}
+}

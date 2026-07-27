@@ -1,0 +1,50 @@
+# Sobreposição de DESENVOLVIMENTO. O compose aplica este arquivo
+# automaticamente quando ele existe; em produção suba com:
+#
+#   docker compose -f docker-compose.yml up -d
+#
+# O que muda aqui:
+#  · portas publicadas em 127.0.0.1 (nunca 0.0.0.0) para você usar psql,
+#    redis-cli e abrir o painel da Evolution do seu próprio computador;
+#  · código montado por bind mount, com recarga automática;
+#  · Caddy fora do caminho — você acessa o Next direto em :3000.
+
+services:
+  app:
+    build:
+      target: base
+    command: ['npm', 'run', 'dev']
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - '127.0.0.1:3000:3000'
+
+  worker:
+    build:
+      target: base
+    command: ['npm', 'run', 'worker:dev']
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  postgres:
+    ports:
+      - '127.0.0.1:5432:5432'
+
+  redis:
+    ports:
+      - '127.0.0.1:6379:6379'
+
+  evolution:
+    ports:
+      - '127.0.0.1:8080:8080'
+
+  caddy:
+    # Em desenvolvimento o Caddy não serve para nada e só atrapalha o TLS local.
+    profiles: ['producao']
