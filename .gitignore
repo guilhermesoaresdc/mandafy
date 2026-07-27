@@ -18,7 +18,6 @@ npm-debug.log*
 
 coverage/
 .vitest/
-next-env.d.ts
 tsconfig.tsbuildinfo
 
 # volumes locais do docker compose

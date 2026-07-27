@@ -24,7 +24,12 @@ const serverSchema = z.object({
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY precisa ser 32 bytes em hex (64 caracteres)'),
 
+  // Papel da aplicação (mandafy_app): RLS SEMPRE aplicado. É o que o app e o
+  // worker usam.
   DATABASE_URL: z.string().min(1),
+  // Papel dono das tabelas: ignora RLS. Usado só por db:migrate e db:seed.
+  // Ausente = cai para DATABASE_URL (ambiente sem separação de papéis).
+  DATABASE_URL_ADMIN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1),
 
   // Evolution API (WhatsApp) — §8.2

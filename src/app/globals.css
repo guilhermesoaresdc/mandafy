@@ -1,0 +1,175 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Tokens (§11.2)
+
+   Conceito: mesa de som. A moldura é sóbria, quase editorial; a cor mora nos
+   controles ativos e em mais nenhum lugar. É o que faz o painel parecer um
+   instrumento, não um dashboard genérico (§11.1).
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Estrutura — papel frio, tinta profunda. Nem cream, nem dark padrão. */
+  --color-paper: #f5f6fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #edeff5;
+  --color-ink: #0b1020;
+  --color-ink-2: #5a6480;
+  --color-line: #dfe3ee;
+
+  /* Ação */
+  --color-live: #4b2ee8;
+  --color-live-soft: #eae6ff;
+
+  /* Canais — só aparecem em elementos ativos */
+  --color-ch-whatsapp: #17b26a;
+  --color-ch-telegram: #2d9cdb;
+  --color-ch-email: #e8863c;
+  --color-ch-sms: #8b5cf6;
+
+  /* Estados */
+  --color-ok: #17b26a;
+  --color-warn: #e8a13c;
+  --color-fail: #e5484d;
+  --color-pending: #8a94ad;
+
+  /* Tipografia (§11.3). As variáveis --font-* são injetadas pelo next/font. */
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
+
+  /* Escala: 11 / 13 / 15 / 18 / 24 / 34 / 48. Nada entre estes valores. */
+  --text-2xs: 11px;
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-base: 18px;
+  --text-lg: 24px;
+  --text-xl: 34px;
+  --text-2xl: 48px;
+
+  /* Divisórias são sempre 1px (§11.2). */
+  --radius-pad: 12px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Números tabulares em tudo que é dado: o log não pode dançar (§11.3). */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Foco visível em toda parte — requisito de acessibilidade, não enfeite. */
+  :focus-visible {
+    outline: 2px solid var(--color-live);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* A barra de pulso é a única animação contínua do sistema, e ela vira lista
+     estática quando o sistema pede menos movimento (§11.6). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   O pad de canal (§11.4)
+
+   Não é toggle: é um pad iluminado. Aceso e saturado quando ligado, apagado e
+   cinza quando desligado. O `filter: grayscale(1)` é o detalhe que importa —
+   converte ícone e fundo para preto e branco com transição contínua, o que é
+   muito mais convincente que trocar classes de cor.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.pad {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition:
+    filter 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 120ms,
+    box-shadow 180ms,
+    border-color 180ms;
+}
+
+/* Ligado: cor do canal, leve halo */
+.pad[data-on='true'] {
+  border-color: var(--ch);
+  background: color-mix(in oklab, var(--ch) 8%, white);
+  box-shadow:
+    0 0 0 1px var(--ch),
+    0 2px 12px color-mix(in oklab, var(--ch) 25%, transparent);
+}
+
+.pad[data-on='true'] .dot {
+  background: var(--ch);
+}
+
+/* Desligado: dessaturado de verdade, não apenas mais claro */
+.pad[data-on='false'] {
+  filter: grayscale(1);
+  opacity: 0.5;
+  border-style: dashed;
+  box-shadow: none;
+}
+
+/* Micro-interação de pressão — é o que dá sensação física */
+.pad:active {
+  transform: scale(0.97);
+}
+
+.pad:disabled {
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pad {
+    transition: none;
+  }
+}
+
+/* O ponto ○ / ◉: o estado não pode depender só de cor (§11.4). */
+.pad .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  flex: none;
+}
