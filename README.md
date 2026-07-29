@@ -83,6 +83,11 @@ Os dois endereços de banco não são redundância: é o que faz o isolamento en
 organizações e o "consultor só vê os próprios leads" valerem no banco, e não
 apenas na interface. Ver [`drizzle/0010_rls.sql`](drizzle/0010_rls.sql).
 
+Rodando sobre Supabase em vez do Postgres do compose? Leia
+[`docs/supabase.md`](docs/supabase.md) antes — há quatro diferenças que, se
+ignoradas, só aparecem em produção. Do Supabase usamos apenas o Postgres:
+nada de `@supabase/supabase-js`, PostgREST ou Supabase Auth.
+
 ## Arquitetura
 
 VPS único com Docker Compose. A Evolution API é obrigatoriamente self-hosted
