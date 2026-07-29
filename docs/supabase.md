@@ -36,6 +36,23 @@ Rode isto **antes** do `npm run db:migrate`. A migration `0010_rls.sql` detecta
 o papel e concede as permissões de tabela; se ele não existir, ela apenas
 registra um aviso e o RLS fica sem efeito.
 
+## 1.5. Conexão direta é IPv6 — não serve para a Vercel
+
+O painel oferece três strings. A diferença não é de gosto:
+
+| Tipo | Host | Rede | Onde serve |
+|---|---|---|---|
+| Direta | `db.<ref>.supabase.co:5432` | **IPv6** | Sua máquina, CI, VPS com IPv6 |
+| Transaction pooler | `aws-N-<regiao>.pooler.supabase.com:6543` | IPv4 + IPv6 | **Vercel e qualquer serverless** |
+| Session pooler | mesma host, `:5432` | IPv4 + IPv6 | Alternativa quando algo exige prepared statements |
+
+A Vercel não faz saída IPv6. Usar a string direta em `DATABASE_URL` produz
+timeout genérico em produção, sem mensagem que aponte a causa — e funciona
+perfeitamente na sua máquina, o que torna o diagnóstico pior ainda.
+
+Regra prática: **direta para `db:migrate` e `db:seed`, pooler para a
+aplicação**. As duas podem coexistir; são variáveis diferentes.
+
 ## 2. Usuário do pooler tem o ref do projeto embutido
 
 Esta é a pegadinha que mais custa tempo. No Supavisor (o pooler), o nome de
