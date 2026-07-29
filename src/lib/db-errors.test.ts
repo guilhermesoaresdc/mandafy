@@ -50,12 +50,18 @@ describe('classifyDbError', () => {
     },
   )
 
-  it('reconhece o "Tenant or user not found" do Supavisor', () => {
-    const { reason, hint } = classifyDbError(new Error('Tenant or user not found'))
+  it.each([
+    ['forma curta', 'Tenant or user not found'],
+    // Forma real observada em produção — com barra e com o nome no meio.
+    ['forma do Supavisor', '(ENOTFOUND) tenant/user mandafy_app.zoxtcfvjafdgjybbclqs not found'],
+    ['maiúsculas', 'TENANT OR USER NOT FOUND'],
+  ])('reconhece tenant desconhecido: %s', (_caso, message) => {
+    const { reason, hint } = classifyDbError(new Error(message))
     expect(reason).toBe('tenant_desconhecido')
-    // As duas causas reais precisam estar na dica.
-    expect(hint).toContain('ref-do-projeto')
+    // As causas reais precisam estar na dica, em ordem de probabilidade.
     expect(hint).toContain('aws-0')
+    expect(hint).toContain('ref-do-projeto')
+    expect(hint).toContain('postgres')
   })
 
   it('reconhece falha de TLS', () => {
