@@ -31,14 +31,46 @@ const globalForDb = globalThis as unknown as {
  * para coletar configuração e não pode exigir segredos de produção; e um
  * processo que só renderiza HTML estático nunca abre conexão à toa.
  */
+/**
+ * Detecta um pooler de conexão em modo transação (Supabase Supavisor na porta
+ * 6543, PgBouncer em `transaction`).
+ *
+ * Nesse modo cada query pode cair numa conexão diferente do servidor, então
+ * prepared statements não sobrevivem entre chamadas e o driver quebra com
+ * "prepared statement already exists". A correção é desligar o preparo.
+ *
+ * Detectamos em vez de exigir configuração manual porque o sintoma — login
+ * falhando só em produção — é caro de diagnosticar. `DATABASE_PREPARE` força
+ * o comportamento quando a heurística não serve.
+ */
+export function usesTransactionPooler(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.port === '6543') return true
+    if (parsed.hostname.includes('pooler.supabase.com')) return true
+    // PgBouncer costuma ser sinalizado por query string.
+    const mode = parsed.searchParams.get('pgbouncer')
+    return mode === 'true' || mode === '1'
+  } catch {
+    return false
+  }
+}
+
 function realClient(): postgres.Sql {
   const cached = globalForDb.__mandafyClient
   if (cached) return cached
 
-  const created = postgres(serverEnv().DATABASE_URL, {
-    max: 10,
+  const url = serverEnv().DATABASE_URL
+  const forced = process.env.DATABASE_PREPARE
+  const prepare = forced === undefined ? !usesTransactionPooler(url) : forced !== 'false'
+
+  const created = postgres(url, {
+    // Serverless abre muitos processos; um pool grande por processo esgota o
+    // limite de conexões do Postgres. Com pooler, quem gerencia é ele.
+    max: prepare ? 10 : 5,
     idle_timeout: 20,
     connect_timeout: 10,
+    prepare,
     // Nenhum dado pessoal em log de aplicação (§14.1): o postgres.js não
     // registra parâmetros por padrão, e não ligamos `debug`.
     onnotice: () => {},
