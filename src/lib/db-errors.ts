@@ -52,7 +52,55 @@ const UNDEFINED_TABLE = '42P01'
 const INVALID_PASSWORD = '28P01'
 const INVALID_AUTHORIZATION = '28000'
 
+/**
+ * Percorre a cadeia de `cause`.
+ *
+ * O Drizzle embrulha o erro do driver num DrizzleQueryError cuja mensagem é
+ * só "Failed query: SELECT 1" — a causa real (senha recusada, host sem rota,
+ * tenant desconhecido) fica em `.cause`. Classificar só a camada de fora
+ * devolve "erro desconhecido" para todo problema de banco.
+ */
+function causeChain(error: unknown): unknown[] {
+  const chain: unknown[] = []
+  let current = error
+  // O limite evita laço infinito se alguém montar um ciclo de causas.
+  for (let depth = 0; current != null && depth < 10; depth += 1) {
+    chain.push(current)
+    current = (current as { cause?: unknown }).cause
+  }
+  return chain
+}
+
+/** Mensagem do erro mais interno que tenha alguma — é a informativa. */
+function deepestMessage(chain: unknown[]): string {
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    const item = chain[i]
+    const message = item instanceof Error ? item.message : typeof item === 'string' ? item : ''
+    if (message) return message
+  }
+  return String(chain[0] ?? '')
+}
+
 export function classifyDbError(error: unknown): DbFailure {
+  const chain = causeChain(error)
+
+  // Do mais interno para o mais externo: a causa raiz é a que interessa.
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    const resultado = classifyOne(chain[i])
+    if (resultado.reason !== 'erro_desconhecido') return resultado
+  }
+
+  const raiz = chain[chain.length - 1]
+  const code = (raiz as { code?: string } | null)?.code
+  return {
+    reason: 'erro_desconhecido',
+    hint: 'Erro não catalogado — `detail` traz a mensagem do driver, sem credenciais.',
+    ...(code ? { code } : {}),
+    detail: redactCredentials(deepestMessage(chain)).slice(0, 300),
+  }
+}
+
+function classifyOne(error: unknown): DbFailure {
   if (isConfigError(error)) {
     return {
       reason: 'configuracao_ausente',
@@ -122,10 +170,10 @@ export function classifyDbError(error: unknown): DbFailure {
     }
   }
 
+  // Sem detail aqui: quem monta a resposta final é classifyDbError, que tem
+  // a cadeia inteira e sabe qual mensagem é a informativa.
   return {
     reason: 'erro_desconhecido',
-    hint: 'Erro não catalogado — o campo `detail` traz a mensagem do driver, sem credenciais.',
-    code,
-    detail: redactCredentials(message).slice(0, 300),
+    hint: 'Erro não catalogado.',
   }
 }

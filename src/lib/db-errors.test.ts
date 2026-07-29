@@ -69,6 +69,58 @@ describe('classifyDbError', () => {
     expect(detail).toContain('algo bem específico')
   })
 
+  /**
+   * O Drizzle embrulha todo erro do driver. Sem percorrer `cause`, qualquer
+   * falha de banco vira "erro desconhecido" com a mensagem inútil
+   * "Failed query: SELECT 1" — foi exatamente o que aconteceu em produção.
+   */
+  describe('erros embrulhados pelo Drizzle', () => {
+    function drizzleWrap(causa: unknown) {
+      return Object.assign(new Error('Failed query: SELECT 1\nparams: '), { cause: causa })
+    }
+
+    it('enxerga a credencial recusada através do invólucro', () => {
+      const erro = drizzleWrap(Object.assign(new Error('password authentication failed'), {
+        code: '28P01',
+      }))
+      expect(classifyDbError(erro).reason).toBe('credencial_recusada')
+    })
+
+    it('enxerga o tenant desconhecido do Supavisor através do invólucro', () => {
+      const erro = drizzleWrap(new Error('Tenant or user not found'))
+      expect(classifyDbError(erro).reason).toBe('tenant_desconhecido')
+    })
+
+    it('enxerga rede sem rota através do invólucro', () => {
+      const erro = drizzleWrap(Object.assign(new Error('connect ENETUNREACH'), {
+        code: 'ENETUNREACH',
+      }))
+      expect(classifyDbError(erro).reason).toBe('rede_inalcancavel')
+    })
+
+    it('enxerga migration pendente através de duas camadas', () => {
+      const erro = drizzleWrap(drizzleWrap(Object.assign(new Error('relation does not exist'), {
+        code: '42P01',
+      })))
+      expect(classifyDbError(erro).reason).toBe('migrations_pendentes')
+    })
+
+    it('quando nada é reconhecido, mostra a mensagem interna e não a do invólucro', () => {
+      const erro = drizzleWrap(new Error('detalhe que importa'))
+      const { detail } = classifyDbError(erro)
+      expect(detail).toContain('detalhe que importa')
+      expect(detail).not.toContain('Failed query')
+    })
+
+    it('não entra em laço infinito com ciclo de causas', () => {
+      const a: { cause?: unknown } & Error = new Error('a')
+      const b: { cause?: unknown } & Error = new Error('b')
+      a.cause = b
+      b.cause = a
+      expect(() => classifyDbError(a)).not.toThrow()
+    })
+  })
+
   it.each([[null], [undefined], ['texto solto'], [42]])(
     'não quebra com entrada estranha: %s',
     (entrada) => {
