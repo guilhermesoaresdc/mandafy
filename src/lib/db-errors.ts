@@ -151,13 +151,13 @@ function classifyOne(error: unknown): DbFailure {
     }
   }
 
-  // Resposta do Supavisor quando o projeto não bate com o endpoint. Quase
-  // sempre: prefixo errado do pooler (aws-0 vs aws-1) ou usuário sem o
-  // sufixo `.<ref-do-projeto>`.
-  if (/tenant or user not found/i.test(message)) {
+  // Resposta do Supavisor quando não encontra o tenant. O texto varia entre
+  // "Tenant or user not found" e "(ENOTFOUND) tenant/user <nome> not found",
+  // por isso o padrão é frouxo no meio.
+  if (/tenant.{0,20}user[\s\S]{0,120}not found/i.test(message)) {
     return {
       reason: 'tenant_desconhecido',
-      hint: 'O pooler não reconheceu o projeto. Confira duas coisas: o usuário precisa terminar em .<ref-do-projeto>, e o prefixo do host pode ser aws-0 em vez de aws-1.',
+      hint: 'O pooler não reconheceu o projeto. Três causas, nesta ordem: (1) o prefixo do host pode ser aws-0 em vez de aws-1; (2) o usuário precisa terminar em .<ref-do-projeto>; (3) papéis criados à mão podem não estar habilitados no pooler — teste com o usuário postgres no mesmo host para descobrir qual é.',
       code,
     }
   }
