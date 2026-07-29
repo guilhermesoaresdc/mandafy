@@ -3,6 +3,7 @@ import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import type { TenantContext } from '@/db'
 import { readSessionToken } from './cookies'
+
 import { validateSessionToken, type AuthUser } from './session'
 
 /**
@@ -20,11 +21,21 @@ export const getCurrentUser = cache(async (): Promise<AuthUser | null> => {
   return user
 })
 
-/** Exige sessão válida. Redireciona para a tela de entrada se não houver. */
+/**
+ * Exige sessão válida. Redireciona para a tela de entrada se não houver.
+ *
+ * O marcador `?sessao=expirada` existe para quebrar um laço: o middleware só
+ * enxerga a presença do cookie, então um cookie que existe mas não valida
+ * mandaria /entrar de volta para /painel indefinidamente. Com o marcador, o
+ * middleware apaga o cookie e deixa a página abrir.
+ */
 export async function requireUser(): Promise<AuthUser> {
   const user = await getCurrentUser()
-  if (!user) redirect('/entrar')
-  return user
+  if (user) return user
+
+  // Havia cookie e mesmo assim não validou: é sessão morta, não ausência dela.
+  const tinhaCookie = (await readSessionToken()) !== null
+  redirect(tinhaCookie ? '/entrar?sessao=expirada' : '/entrar')
 }
 
 /**

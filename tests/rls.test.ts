@@ -82,6 +82,10 @@ describe.skipIf(!habilitado)('RLS — isolamento entre organizações e consulto
         (${LEAD_DO_CONSULTOR}, ${ORG_A}, ${contatoA}, ${CONSULTOR_A},  ${pipeA}, ${etapaA}, 'Lead do consultor'),
         (${LEAD_DE_OUTRO},     ${ORG_A}, ${contatoA}, ${CONSULTOR_A2}, ${pipeA}, ${etapaA}, 'Lead de outro consultor'),
         (${LEAD_ORG_B},        ${ORG_B}, ${contatoB}, NULL,            ${pipeB}, ${etapaB}, 'Lead da org B')`
+
+      // Sessão usada pelo teste do caminho de autenticação.
+      await tx`INSERT INTO sessions (id, user_id, expires_at)
+               VALUES ('sessao-de-teste', ${CONSULTOR_A}, now() + interval '1 day')`
     })
   })
 
@@ -105,6 +109,39 @@ describe.skipIf(!habilitado)('RLS — isolamento entre organizações e consulto
   it('sem contexto de tenant, nenhum lead é visível', async () => {
     const leads = await app`SELECT id FROM leads`
     expect(leads).toHaveLength(0)
+  })
+
+  /**
+   * O caminho de autenticação roda ANTES de existir contexto de tenant — é ele
+   * que descobre a qual organização o usuário pertence. Se qualquer uma das
+   * três tabelas envolvidas ficar invisível nesse momento, toda sessão válida
+   * é tratada como inválida e o app entra em laço de redirecionamento.
+   *
+   * Foi exatamente o que aconteceu em produção: `organizations` filtrava com
+   * `id = mandafy_current_org()`, que sem contexto compara com NULL e resulta
+   * em nulo — nunca verdadeiro.
+   */
+  describe('caminho de autenticação sem contexto de tenant', () => {
+    it.each([['sessions'], ['users'], ['organizations']])(
+      '%s é legível para o papel da aplicação',
+      async (tabela) => {
+        const linhas = await app`SELECT 1 FROM ${app(tabela)} LIMIT 1`
+        expect(linhas.length).toBeGreaterThan(0)
+      },
+    )
+
+    it('a junção completa devolve o usuário — é a query real de validateSessionToken', async () => {
+      const [linha] = await app<{ user_id: string; org_id: string; org_name: string }[]>`
+        SELECT u.id AS user_id, u.org_id, o.name AS org_name
+        FROM sessions s
+        INNER JOIN users u         ON u.id = s.user_id
+        INNER JOIN organizations o ON o.id = u.org_id
+        WHERE s.id = ${'sessao-de-teste'}
+        LIMIT 1
+      `
+      expect(linha).toBeDefined()
+      expect(linha?.org_id).toBe(ORG_A)
+    })
   })
 
   it('admin enxerga todos os leads da própria organização', async () => {
