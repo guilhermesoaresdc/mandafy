@@ -112,6 +112,23 @@ não expressa tabelas particionadas, políticas RLS, `citext` nem índices
 trigram — e o sistema depende dos quatro. O schema Drizzle em `src/db/schema/`
 existe para tipar as queries e espelha aquele SQL.
 
+## Deploy na Vercel
+
+`vercel.json` traz um `ignoreCommand` que **só deixa construir a produção**.
+Deploys de preview em cada push consomem crédito rápido e, neste projeto, não
+mostram nada de útil: sem `DATABASE_URL` e `REDIS_URL` no ambiente de preview,
+a aplicação só chega até a tela de entrada.
+
+A semântica do `ignoreCommand` é invertida e vale registrar, porque confunde:
+**código 1 constrói, código 0 pula**. Por isso a linha testa se
+`VERCEL_ENV` é `production` e sai com 1 nesse caso.
+
+Produção, para a Vercel, é a *branch de produção do projeto* — a `main`. Código
+em qualquer outro branch só vira site depois do merge.
+
+Para reativar previews temporariamente, apague o `ignoreCommand` ou troque a
+condição. Rodando local (`npm run dev`) nada disso se aplica.
+
 ## Fases
 
 - [x] **1 — Fundação**: compose, schema, migrations, autenticação, RBAC, design system, navegação
