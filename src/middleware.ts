@@ -15,11 +15,24 @@ const SESSION_COOKIE = 'mandafy_session'
 const LOGIN_PATH = '/entrar'
 
 export function middleware(request: NextRequest) {
-  const { pathname, search } = request.nextUrl
+  const { pathname, search, searchParams } = request.nextUrl
   const hasCookie = request.cookies.has(SESSION_COOKIE)
   const isLoginPage = pathname === LOGIN_PATH
 
   if (isLoginPage) {
+    /*
+     * O servidor validou a sessão, ela não valeu, e nos mandou para cá.
+     * Devolver para /painel só porque o cookie existe criaria um laço
+     * infinito de redirecionamento — foi o que aconteceu quando uma política
+     * de RLS impediu a leitura da organização. Aqui o cookie morto é
+     * descartado e a tela de entrada abre.
+     */
+    if (searchParams.get('sessao') === 'expirada') {
+      const response = NextResponse.next()
+      response.cookies.delete(SESSION_COOKIE)
+      return response
+    }
+
     if (hasCookie) {
       return NextResponse.redirect(new URL('/painel', request.url))
     }
