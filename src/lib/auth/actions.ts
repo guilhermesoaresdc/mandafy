@@ -6,6 +6,8 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { db } from '@/db'
 import { auditLog, users } from '@/db/schema'
+import { isConfigError } from '@/env'
+import { createLogger } from '@/lib/logger'
 import { verifyPassword } from './password'
 import { clearSessionCookie, readSessionToken, setSessionCookie } from './cookies'
 import { consumeAttempt, resetAttempts } from './rate-limit'
@@ -24,6 +26,20 @@ const entrarSchema = z.object({
  * cadastrados.
  */
 const CREDENCIAIS_INVALIDAS = 'E-mail ou senha incorretos.'
+
+const log = createLogger('auth')
+
+/**
+ * Erros explicam o que houve e o que fazer, sem pedir desculpa (§11.7).
+ * Sem isto, ambiente mal configurado vira um 500 cru e o operador vai procurar
+ * bug onde só falta variável.
+ */
+function mensagemDeFalha(error: unknown): string {
+  if (isConfigError(error)) {
+    return `O sistema ainda não está configurado (${error.missing.join(', ')}). Preencha as variáveis de ambiente e recarregue.`
+  }
+  return 'Não foi possível entrar agora. O banco de dados não respondeu — tente de novo em instantes.'
+}
 
 /** Primeiro IP da cadeia do proxy. O Caddy preenche X-Forwarded-For. */
 async function clientIp(): Promise<string | null> {
@@ -54,45 +70,56 @@ export async function entrarAction(
     return { error: 'Muitas tentativas. Tente de novo em alguns minutos.' }
   }
 
-  const [user] = await db
-    .select({
-      id: users.id,
-      orgId: users.orgId,
-      passwordHash: users.passwordHash,
-      active: users.active,
+  try {
+    const [user] = await db
+      .select({
+        id: users.id,
+        orgId: users.orgId,
+        passwordHash: users.passwordHash,
+        active: users.active,
+      })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1)
+
+    // Verificamos a senha mesmo sem usuário, contra um hash descartável, para
+    // que o tempo de resposta não denuncie se o e-mail existe.
+    const hash = user?.passwordHash ?? '$scrypt$0$0$0$x$x'
+    const senhaOk = await verifyPassword(parsed.data.senha, hash)
+
+    if (!user || !senhaOk || !user.active) {
+      return { error: CREDENCIAIS_INVALIDAS }
+    }
+
+    const userAgent = (await headers()).get('user-agent')
+    const { token, session } = await createSession(user.id, { ip, userAgent })
+
+    await setSessionCookie(token, session.expiresAt)
+    await resetAttempts('login', `${ip ?? 'sem-ip'}:${email}`)
+
+    await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id))
+
+    // Sem dado pessoal no registro: só o id do usuário (§14.1).
+    await db.insert(auditLog).values({
+      orgId: user.orgId,
+      userId: user.id,
+      action: 'auth.login',
+      entity: 'user',
+      entityId: user.id,
+      ip,
+      userAgent: userAgent?.slice(0, 500) ?? null,
     })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1)
-
-  // Verificamos a senha mesmo sem usuário, contra um hash descartável, para
-  // que o tempo de resposta não denuncie se o e-mail existe.
-  const hash = user?.passwordHash ?? '$scrypt$0$0$0$x$x'
-  const senhaOk = await verifyPassword(parsed.data.senha, hash)
-
-  if (!user || !senhaOk || !user.active) {
-    return { error: CREDENCIAIS_INVALIDAS }
+  } catch (error) {
+    // Sem e-mail nem senha no log (§14.1) — só o motivo técnico.
+    log.error('falha ao processar entrada', {
+      kind: error instanceof Error ? error.name : 'desconhecido',
+      reason: error instanceof Error ? error.message : String(error),
+    })
+    return { error: mensagemDeFalha(error) }
   }
 
-  const userAgent = (await headers()).get('user-agent')
-  const { token, session } = await createSession(user.id, { ip, userAgent })
-
-  await setSessionCookie(token, session.expiresAt)
-  await resetAttempts('login', `${ip ?? 'sem-ip'}:${email}`)
-
-  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id))
-
-  // Sem dado pessoal no registro: só o id do usuário (§14.1).
-  await db.insert(auditLog).values({
-    orgId: user.orgId,
-    userId: user.id,
-    action: 'auth.login',
-    entity: 'user',
-    entityId: user.id,
-    ip,
-    userAgent: userAgent?.slice(0, 500) ?? null,
-  })
-
+  // Fora do try: `redirect()` sinaliza por exceção, e engoli-la aqui
+  // transformaria um login bem-sucedido em mensagem de erro.
   redirect('/painel')
 }
 

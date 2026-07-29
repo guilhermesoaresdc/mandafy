@@ -63,6 +63,25 @@ const serverSchema = z.object({
 
 export type ServerEnv = z.infer<typeof serverSchema>
 
+/**
+ * Ambiente incompleto. Tipada para que a interface consiga distinguir
+ * "faltou configurar" de "deu erro de verdade" e mostrar a mensagem certa —
+ * um 500 cru manda o operador procurar bug onde só falta variável.
+ */
+export class ConfigError extends Error {
+  readonly missing: string[]
+
+  constructor(message: string, missing: string[]) {
+    super(message)
+    this.name = 'ConfigError'
+    this.missing = missing
+  }
+}
+
+export function isConfigError(error: unknown): error is ConfigError {
+  return error instanceof ConfigError
+}
+
 let cached: ServerEnv | null = null
 
 /** Lê e valida o ambiente uma única vez. Lança com mensagem legível se faltar algo. */
@@ -71,12 +90,14 @@ export function serverEnv(): ServerEnv {
 
   const parsed = serverSchema.safeParse(process.env)
   if (!parsed.success) {
+    const missing = parsed.error.issues.map((i) => i.path.join('.'))
     const detalhes = parsed.error.issues
       .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
       .join('\n')
-    throw new Error(
+    throw new ConfigError(
       `Variáveis de ambiente inválidas ou ausentes:\n${detalhes}\n\n` +
         'Copie .env.example para .env e preencha. Veja a seção 16 da especificação.',
+      missing,
     )
   }
 
