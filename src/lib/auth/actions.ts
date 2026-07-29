@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { db } from '@/db'
 import { auditLog, users } from '@/db/schema'
 import { isConfigError } from '@/env'
+import { classifyDbError } from '@/lib/db-errors'
 import { createLogger } from '@/lib/logger'
 import { verifyPassword } from './password'
 import { clearSessionCookie, readSessionToken, setSessionCookie } from './cookies'
@@ -31,14 +32,16 @@ const log = createLogger('auth')
 
 /**
  * Erros explicam o que houve e o que fazer, sem pedir desculpa (§11.7).
- * Sem isto, ambiente mal configurado vira um 500 cru e o operador vai procurar
- * bug onde só falta variável.
+ * Sem isto, ambiente mal configurado vira um 500 cru — ou, pior, uma mensagem
+ * genérica que manda procurar em quatro lugares diferentes.
  */
 function mensagemDeFalha(error: unknown): string {
   if (isConfigError(error)) {
-    return `O sistema ainda não está configurado (${error.missing.join(', ')}). Preencha as variáveis de ambiente e recarregue.`
+    return `O sistema ainda não está configurado: falta ${error.missing.join(', ')}. Defina as variáveis de ambiente e faça um novo deploy.`
   }
-  return 'Não foi possível entrar agora. O banco de dados não respondeu — tente de novo em instantes.'
+
+  const { hint } = classifyDbError(error)
+  return `Não foi possível entrar. ${hint}`
 }
 
 /** Primeiro IP da cadeia do proxy. O Caddy preenche X-Forwarded-For. */
