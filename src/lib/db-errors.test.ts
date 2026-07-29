@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { classifyDbError, redactCredentials } from './db-errors'
 import { ConfigError } from '@/env'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import { sql } from 'drizzle-orm'
+import postgres from 'postgres'
 
 /**
  * A classificação existe para que quem está configurando o sistema descubra a
@@ -118,6 +121,36 @@ describe('classifyDbError', () => {
       a.cause = b
       b.cause = a
       expect(() => classifyDbError(a)).not.toThrow()
+    })
+
+    /**
+     * Os testes acima usam um invólucro imitado. Este usa o Drizzle e o
+     * postgres.js de verdade, contra uma porta morta.
+     *
+     * Existe porque a falha em produção foi justamente uma suposição errada
+     * sobre o formato do erro: se uma versão futura do Drizzle deixar de usar
+     * `cause`, é aqui que se descobre — e não pelo diagnóstico voltar a ser
+     * inútil no ar.
+     */
+    it('classifica o erro real do Drizzle + postgres.js', async () => {
+      const client = postgres('postgresql://u:p@127.0.0.1:59999/x', {
+        max: 1,
+        connect_timeout: 2,
+        onnotice: () => {},
+      })
+      const db = drizzle(client)
+
+      try {
+        await db.execute(sql`SELECT 1`)
+        expect.unreachable('a conexão deveria ter falhado')
+      } catch (error) {
+        // O invólucro em si não diz nada: "Failed query: SELECT 1".
+        expect((error as Error).message).toContain('Failed query')
+        // Mas a classificação enxerga a causa e reconhece a recusa.
+        expect(classifyDbError(error).reason).toBe('sem_resposta')
+      } finally {
+        await client.end({ timeout: 1 }).catch(() => {})
+      }
     })
   })
 
