@@ -209,3 +209,29 @@ describe('redactCredentials', () => {
     expect(redactCredentials('connection refused')).toBe('connection refused')
   })
 })
+
+/**
+ * Erros que só aparecem quando o papel da aplicação é diferente do dono das
+ * tabelas — exatamente o arranjo que dá sentido à RLS. Como o dono nunca os
+ * vê, é fácil configurar o banco, testar com `postgres`, achar que está tudo
+ * certo, e só descobrir em produção.
+ */
+describe('erros específicos do papel da aplicação', () => {
+  it('42883 aponta o search_path sem `extensions` (citext não resolve)', () => {
+    const { reason, hint } = classifyDbError({ code: '42883' })
+    expect(reason).toBe('search_path_incompleto')
+    expect(hint).toContain('search_path')
+  })
+
+  it('42501 aponta falta de GRANT nas tabelas', () => {
+    const { reason, hint } = classifyDbError({ code: '42501' })
+    expect(reason).toBe('sem_privilegio')
+    expect(hint).toContain('grant')
+  })
+
+  it('a dica do desconhecido manda ao lugar onde o detalhe existe', () => {
+    // A tela de entrada mostra só a dica; o `detail` vive no healthcheck.
+    const { hint } = classifyDbError(new Error('nada reconhecível'))
+    expect(hint).toContain('/api/health')
+  })
+})

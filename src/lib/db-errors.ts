@@ -23,6 +23,8 @@ export type DbFailure = {
     | 'tenant_desconhecido'
     | 'tls_recusado'
     | 'migrations_pendentes'
+    | 'search_path_incompleto'
+    | 'sem_privilegio'
     | 'erro_desconhecido'
   /** O que fazer a respeito. */
   hint: string
@@ -48,6 +50,10 @@ export function redactCredentials(message: string): string {
 
 /** Erro do Postgres quando a tabela não existe: o schema não foi migrado. */
 const UNDEFINED_TABLE = '42P01'
+/** Operador ou função inexistente — tipicamente search_path sem `extensions`. */
+const UNDEFINED_FUNCTION = '42883'
+/** Sem privilégio na tabela. */
+const INSUFFICIENT_PRIVILEGE = '42501'
 /** Senha incorreta e papel inexistente/sem permissão. */
 const INVALID_PASSWORD = '28P01'
 const INVALID_AUTHORIZATION = '28000'
@@ -94,7 +100,7 @@ export function classifyDbError(error: unknown): DbFailure {
   const code = (raiz as { code?: string } | null)?.code
   return {
     reason: 'erro_desconhecido',
-    hint: 'Erro não catalogado — `detail` traz a mensagem do driver, sem credenciais.',
+    hint: 'Erro não catalogado. Abra /api/health para ver a mensagem do driver.',
     ...(code ? { code } : {}),
     detail: redactCredentials(deepestMessage(chain)).slice(0, 300),
   }
@@ -115,6 +121,27 @@ function classifyOne(error: unknown): DbFailure {
     return {
       reason: 'migrations_pendentes',
       hint: 'O banco está vazio. Rode: npm run db:migrate && npm run db:seed',
+    }
+  }
+
+  // 42883 = operador ou função inexistente. Num banco recém-configurado quase
+  // sempre significa que o tipo citext está num schema fora do search_path do
+  // papel da aplicação — o Supabase instala extensões em `extensions`, e sem
+  // isso a comparação `email = $1` não acha o operador.
+  if (code === UNDEFINED_FUNCTION) {
+    return {
+      reason: 'search_path_incompleto',
+      hint: 'O papel da aplicação não enxerga as extensões. Rode no SQL Editor: alter role mandafy_app set search_path = public, extensions;',
+      code,
+    }
+  }
+
+  // 42501 = sem privilégio na tabela.
+  if (code === INSUFFICIENT_PRIVILEGE) {
+    return {
+      reason: 'sem_privilegio',
+      hint: 'O papel da aplicação não tem permissão nas tabelas. Rode no SQL Editor: grant select, insert, update, delete on all tables in schema public to mandafy_app; grant usage, select on all sequences in schema public to mandafy_app;',
+      code,
     }
   }
 
