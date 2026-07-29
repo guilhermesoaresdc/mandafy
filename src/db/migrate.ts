@@ -17,6 +17,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import postgres from 'postgres'
+import { usesTransactionPooler } from './index'
 
 const MIGRATIONS_DIR = join(process.cwd(), 'drizzle')
 
@@ -35,7 +36,14 @@ function checksum(content: string): string {
 }
 
 export async function runMigrations(): Promise<void> {
-  const sql = postgres(adminUrl(), { max: 1, onnotice: (n) => console.log(`  ↳ ${n.message}`) })
+  const url = adminUrl()
+  const sql = postgres(url, {
+    max: 1,
+    // Mesmo motivo de src/db/index.ts: atrás de um pooler em modo transação,
+    // prepared statements não sobrevivem entre queries.
+    prepare: !usesTransactionPooler(url),
+    onnotice: (n) => console.log(`  ↳ ${n.message}`),
+  })
 
   try {
     await sql`

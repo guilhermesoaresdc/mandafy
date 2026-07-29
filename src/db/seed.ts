@@ -14,6 +14,7 @@ import { eq } from 'drizzle-orm'
 import { pathToFileURL } from 'node:url'
 import postgres from 'postgres'
 import * as schema from './schema'
+import { usesTransactionPooler } from './index'
 import { generatePassword, hashPassword } from '@/lib/auth/password'
 
 const ORG_SLUG = 'mandafy'
@@ -44,7 +45,12 @@ function adminUrl(): string {
 }
 
 export async function seed(): Promise<void> {
-  const sql = postgres(adminUrl(), { max: 1, onnotice: () => {} })
+  const url = adminUrl()
+  const sql = postgres(url, {
+    max: 1,
+    prepare: !usesTransactionPooler(url),
+    onnotice: () => {},
+  })
   const db = drizzle(sql, { schema })
 
   try {
