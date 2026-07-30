@@ -40,8 +40,15 @@ function mensagemDeFalha(error: unknown): string {
     return `O sistema ainda não está configurado: falta ${error.missing.join(', ')}. Defina as variáveis de ambiente e faça um novo deploy.`
   }
 
-  const { hint } = classifyDbError(error)
-  return `Não foi possível entrar. ${hint}`
+  const { hint, detail } = classifyDbError(error)
+
+  /*
+   * O detalhe entra na mensagem porque ele nomeia o objeto: "permission denied
+   * for table sessions" resolve em um segundo o que a dica genérica deixa em
+   * aberto. As credenciais já foram removidas por classifyDbError, e este é um
+   * painel de acesso restrito — não uma página de cliente final.
+   */
+  return detail ? `Não foi possível entrar. ${hint} (${detail})` : `Não foi possível entrar. ${hint}`
 }
 
 /** Primeiro IP da cadeia do proxy. O Caddy preenche X-Forwarded-For. */
