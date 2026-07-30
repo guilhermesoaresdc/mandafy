@@ -50,23 +50,31 @@ export function verifySignature(
 
   const partes = header.split(',').reduce<Record<string, string>>((acc, item) => {
     const [k, v] = item.split('=')
-    if (k && v) acc[k.trim()] = v.trim()
+    if (k && v) acc[k.trim().toLowerCase()] = v.trim()
     return acc
   }, {})
 
   const timestamp = partes.t
   const assinatura = partes.v1 ?? partes.sha256 ?? partes.signature
 
-  // Forma simples: o header é o hex puro.
-  if (!timestamp && !assinatura) {
-    const hex = header.trim().replace(/^sha256=/i, '')
+  /*
+   * Forma simples: o HMAC é sobre o corpo apenas, sem timestamp. Vale tanto
+   * para o hex puro quanto para `sha256=<hex>`, que é como várias plataformas
+   * de sorteio assinam. Sem timestamp não há proteção contra replay — mas a
+   * alternativa seria recusar a integração inteira, e a deduplicação de §4.3
+   * já limita o estrago de um reenvio.
+   */
+  if (!timestamp) {
+    const hex = (assinatura ?? header).trim().replace(/^sha256=/i, '')
     if (!/^[0-9a-f]{64}$/i.test(hex)) return { present: true, valid: false, reason: 'formato' }
     const esperado = createHmac('sha256', secret).update(rawBody).digest('hex')
     const valid = compararEmTempoConstante(hex.toLowerCase(), esperado)
-    return valid ? { present: true, valid: true } : { present: true, valid: false, reason: 'assinatura' }
+    return valid
+      ? { present: true, valid: true }
+      : { present: true, valid: false, reason: 'assinatura' }
   }
 
-  if (!timestamp || !assinatura) return { present: true, valid: false, reason: 'formato' }
+  if (!assinatura) return { present: true, valid: false, reason: 'formato' }
 
   const emSegundos = Number(timestamp)
   if (!Number.isFinite(emSegundos)) return { present: true, valid: false, reason: 'formato' }

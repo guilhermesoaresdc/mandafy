@@ -70,6 +70,14 @@ export function getByPath(source: unknown, path: string): unknown {
       // Só objetos comuns. Array com chave textual e primitivo com propriedade
       // (`"texto".length`) não são acessos legítimos de payload.
       if (typeof current !== 'object' || Array.isArray(current)) return undefined
+
+      /*
+       * Apenas propriedades próprias. Sem isto, `$.constructor` devolve a
+       * função Object e `$.__proto__` alcança o protótipo — um mapeamento mal
+       * configurado, ou um payload hostil, extrairia internals do runtime para
+       * dentro de uma mensagem enviada ao cliente.
+       */
+      if (!Object.prototype.hasOwnProperty.call(current, segment.key)) return undefined
       current = (current as Record<string, unknown>)[segment.key]
       continue
     }
