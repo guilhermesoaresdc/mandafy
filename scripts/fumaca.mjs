@@ -13,6 +13,7 @@
  * o script avisa e sai sem falhar, para não quebrar CI de máquina limpa.
  */
 import { spawn } from 'node:child_process'
+import { createConnection } from 'node:net'
 
 const BASE = 'http://127.0.0.1:3111'
 const env = {
@@ -30,12 +31,51 @@ const env = {
   ENCRYPTION_KEY: 'a'.repeat(64),
 }
 
-const server = spawn('npx', ['next', 'start', '-p', '3111'], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+const espera = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * A porta já está ocupada?
+ *
+ * Vale o cuidado: se um servidor de uma execução anterior tiver sobrado, ele
+ * atenderia as requisições com um build ANTIGO — e o teste passaria ou falharia
+ * sobre código que não é o atual. Já aconteceu, e custou caro para descobrir.
+ */
+function portaOcupada(porta) {
+  return new Promise((resolve) => {
+    const soquete = createConnection({ host: '127.0.0.1', port: porta })
+    soquete.on('connect', () => { soquete.destroy(); resolve(true) })
+    soquete.on('error', () => resolve(false))
+    setTimeout(() => { soquete.destroy(); resolve(false) }, 1000)
+  })
+}
+
+if (await portaOcupada(3111)) {
+  console.log('A porta 3111 já está ocupada. Encerre o processo antes: pkill -f next-server')
+  process.exit(1)
+}
+
+/*
+ * `detached` cria um grupo de processos próprio. Sem isso, `server.kill()`
+ * mataria só o `npx` e deixaria o `next start` filho no ar segurando a porta —
+ * que é exatamente como uma execução passou a testar um build velho.
+ */
+const server = spawn('npx', ['next', 'start', '-p', '3111'], {
+  env,
+  stdio: ['ignore', 'pipe', 'pipe'],
+  detached: true,
+})
 let saida = ''
 server.stdout.on('data', (d) => { saida += d })
 server.stderr.on('data', (d) => { saida += d })
 
-const espera = (ms) => new Promise((r) => setTimeout(r, ms))
+function encerrarServidor() {
+  try {
+    // O sinal negativo alcança o grupo inteiro, não só o `npx`.
+    process.kill(-server.pid, 'SIGTERM')
+  } catch {
+    server.kill('SIGKILL')
+  }
+}
 
 async function pronto() {
   for (let i = 0; i < 60; i += 1) {
@@ -81,7 +121,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/canais', '/configuracoes/plataformas', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/configuracoes/plataformas', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -105,13 +145,22 @@ try {
 
     const lista = await (await get('/mensagens')).text()
     checar('lista mostra a mensagem criada', lista.includes('fumaca_teste'))
+
+    // Um fluxo-modelo do seed, com a tela de detalhe.
+    const [fluxo] = await db`SELECT id FROM flows WHERE org_id = ${usuario.org_id} LIMIT 1`
+    if (fluxo) {
+      const r = await get(`/fluxos/${fluxo.id}`)
+      const corpo = await r.text()
+      const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
+      checar('GET /fluxos/{id}', r.status === 200 && !erro, `status ${r.status}`)
+    }
   } finally {
     await db`DELETE FROM messages WHERE id = ${msg.id}`
     await db`DELETE FROM sessions WHERE user_id = ${usuario.id}`
     await db.end({ timeout: 0 })
   }
 } finally {
-  server.kill('SIGTERM')
+  encerrarServidor()
 }
 
 console.log(falhas === 0 ? '\nTudo passou.' : `\n${falhas} falha(s).`)

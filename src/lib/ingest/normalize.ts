@@ -3,6 +3,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm'
 import { db, withTenant, type Tx } from '@/db'
 import { contacts, events, eventsRaw, sources } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
+import { processarEvento } from '@/lib/flows/run'
 import { applyMapping, type NormalizedContact } from './mapping'
 
 /**
@@ -166,8 +167,41 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
     // Sem dado pessoal: só identificadores (§14.1).
     log.info('evento normalizado', { rawId, eventId: eventId.id, type: normalizado.type })
 
-    // TODO Fase 5: disparar os fluxos cujo trigger_event bate com este tipo,
-    // e cancelar os agendamentos cuja cancel_key corresponda (§5.1).
+    /*
+     * O evento normalizado entra no motor de cadência (§5): cancela o que este
+     * evento cancela e dispara os fluxos que ele aciona.
+     *
+     * Transação SEPARADA da gravação de propósito. O evento já está no banco e
+     * `events_raw` já está marcado como processado; se um fluxo tiver defeito,
+     * o que se perde é o disparo, não o registro do que aconteceu. Juntar as
+     * duas faria um fluxo quebrado apagar o histórico da ingestão.
+     */
+    const cadencia = await withTenant(
+      { orgId: source.orgId, userId: source.orgId, isAdmin: true },
+      (tx) =>
+        processarEvento(tx, {
+          orgId: source.orgId,
+          tipo: normalizado.type,
+          contactId: eventId.contactId,
+          eventId: eventId.id,
+          // As variáveis das mensagens e a chave de cancelamento saem daqui.
+          dados: { ...normalizado.data, external_id: normalizado.externalId ?? null, contact_id: eventId.contactId },
+        }),
+    ).catch((erro: unknown) => {
+      log.error('falha no motor de cadência', {
+        eventId: eventId.id,
+        reason: erro instanceof Error ? erro.message : 'desconhecido',
+      })
+      return null
+    })
+
+    if (cadencia) {
+      log.info('cadência processada', {
+        eventId: eventId.id,
+        cancelados: cadencia.cancelados,
+        disparados: cadencia.fluxos.filter((f) => f.disparado).length,
+      })
+    }
 
     return {
       status: 'processado',

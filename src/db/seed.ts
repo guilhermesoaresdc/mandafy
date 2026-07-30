@@ -16,6 +16,7 @@ import postgres from 'postgres'
 import * as schema from './schema'
 import { usesTransactionPooler } from './index'
 import { generatePassword, hashPassword } from '@/lib/auth/password'
+import { seedFlows } from './seed-flows'
 
 const ORG_SLUG = 'mandafy'
 
@@ -165,8 +166,16 @@ export async function seed(): Promise<void> {
       console.log('· Pipeline já existe.')
     }
 
-    // TODO Fase 3: mensagens-modelo (boas-vindas, pix_lembrete_1…4, etc).
-    // TODO Fase 5: os 9 fluxos-modelo de §5.2, incluindo a Recuperação de PIX.
+    // ── Mensagens e fluxos-modelo (§5.2, §6) ─────────────────────────────────
+    const modelos = await seedFlows(db, org.id)
+    console.log(
+      modelos.mensagens > 0 || modelos.fluxos > 0
+        ? `✓ ${modelos.mensagens} mensagem(ns) e ${modelos.fluxos} fluxo(s)-modelo criados.`
+        : '· Mensagens e fluxos-modelo já existem.',
+    )
+    if (modelos.fluxos > 0) {
+      console.log('    Os fluxos nascem PAUSADOS. Revise o texto e ative quando quiser.')
+    }
 
     console.log('\nSeed concluído.')
   } finally {

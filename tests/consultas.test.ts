@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
@@ -6,6 +6,7 @@ import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { listarPlataformas } from '@/db/queries/sources'
 import { buscarMensagem, chaveEmUso, listarMensagens } from '@/db/queries/messages'
+import { buscarFluxo, listarFluxos } from '@/db/queries/flows'
 
 /**
  * Consultas das telas, EXECUTADAS contra um Postgres de verdade.
@@ -223,6 +224,73 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
         expect(await comoUsuario((tx) => chaveEmUso(tx, ORG, 'minha', MENSAGEM))).toBe(false)
       } finally {
         await admin`DELETE FROM messages WHERE id = ${MENSAGEM}`
+        await admin`DELETE FROM organizations WHERE id = ${outraOrg}`
+      }
+    })
+  })
+
+  describe('fluxos (§5)', () => {
+    const FLUXO = uid('c20')
+    const MSG_A = uid('c21')
+    const MSG_B = uid('c22')
+
+    beforeEach(async () => {
+      await admin.begin(async (tx) => {
+        await tx`DELETE FROM flow_steps WHERE flow_id = ${FLUXO}`
+        await tx`DELETE FROM flows WHERE id = ${FLUXO}`
+        await tx`DELETE FROM messages WHERE id IN (${MSG_A}, ${MSG_B})`
+
+        await tx`INSERT INTO messages (id, org_id, key, name, body, active) VALUES
+          (${MSG_A}, ${ORG}, 'passo_a', 'Passo A', 'oi', true),
+          (${MSG_B}, ${ORG}, 'passo_b', 'Passo B', 'oi', false)`
+        await tx`INSERT INTO flows (id, org_id, name, trigger_event, cancel_on, cancel_key_template)
+          VALUES (${FLUXO}, ${ORG}, 'Recuperação', 'order.created',
+                  ARRAY['order.paid'], 'order:{{external_id}}')`
+        await tx`INSERT INTO flow_steps (flow_id, position, delay_seconds, message_id) VALUES
+          (${FLUXO}, 1, 300,  ${MSG_A}),
+          (${FLUXO}, 2, 1200, ${MSG_B})`
+      })
+    })
+
+    afterAll(async () => {
+      await admin`DELETE FROM flow_steps WHERE flow_id = ${FLUXO}`
+      await admin`DELETE FROM flows WHERE id = ${FLUXO}`
+      await admin`DELETE FROM messages WHERE id IN (${MSG_A}, ${MSG_B})`
+    })
+
+    it('a lista traz o gatilho, os passos e o aviso de mensagem pausada', async () => {
+      const lista = await comoUsuario(listarFluxos)
+      const fluxo = lista.find((f) => f.id === FLUXO)
+
+      expect(fluxo?.triggerEvent).toBe('order.created')
+      expect(fluxo?.passos).toBe(2)
+      // Um fluxo ativo com mensagem pausada não envia nada e não avisa sozinho.
+      expect(fluxo?.temMensagemPausada).toBe(true)
+    })
+
+    it('o detalhe mostra o tempo ACUMULADO, não o do passo', async () => {
+      const completo = await comoUsuario((tx) => buscarFluxo(tx, FLUXO))
+
+      // +5min e depois +20min viram "+5 min" e "+25 min" desde o gatilho.
+      expect(completo?.passos.map((p) => p.offsetLabel)).toEqual(['+5 min', '+25 min'])
+      expect(completo?.passos.map((p) => p.delaySeconds)).toEqual([300, 1200])
+    })
+
+    it('fluxo de outra organização não é encontrado', async () => {
+      const outraOrg = uid('c25')
+      const outroFluxo = uid('c26')
+
+      await admin.begin(async (tx) => {
+        await tx`DELETE FROM organizations WHERE id = ${outraOrg}`
+        await tx`INSERT INTO organizations (id, name, slug) VALUES (${outraOrg}, 'Vizinha 3', 'consultas-fluxo-viz')`
+        await tx`INSERT INTO flows (id, org_id, name, trigger_event) VALUES
+          (${outroFluxo}, ${outraOrg}, 'Secreto', 'order.created')`
+      })
+
+      try {
+        expect(await comoUsuario((tx) => buscarFluxo(tx, outroFluxo))).toBeNull()
+      } finally {
+        await admin`DELETE FROM flows WHERE id = ${outroFluxo}`
         await admin`DELETE FROM organizations WHERE id = ${outraOrg}`
       }
     })

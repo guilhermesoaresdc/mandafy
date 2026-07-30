@@ -23,6 +23,7 @@ export const MOTIVOS_SKIP = [
   'sem_destino',
   'canal_desligado',
   'mensagem_pausada',
+  'sem_numero_conectado',
 ] as const
 
 export type MotivoSkip = (typeof MOTIVOS_SKIP)[number]
@@ -36,6 +37,7 @@ export const MOTIVO_LABELS: Record<MotivoSkip, string> = {
   sem_destino: 'sem endereço para este canal',
   canal_desligado: 'canal desligado nesta mensagem',
   mensagem_pausada: 'a mensagem está pausada',
+  sem_numero_conectado: 'nenhum número de WhatsApp conectado',
 }
 
 /** Teto diário por contato, somando todos os canais (§5.3, regra 4). */

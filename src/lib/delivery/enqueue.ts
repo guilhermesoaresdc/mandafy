@@ -11,7 +11,7 @@ import { createLogger } from '@/lib/logger'
 import { serverEnv } from '@/env'
 import { decidirEnvio, type ContatoParaEnvio, type MotivoSkip } from './guards'
 import { sortearAtraso, type PerfilJitter } from './jitter'
-import { escolherInstancia } from './warmup'
+import { escolherParaAgendamento } from './warmup'
 import { carregarInstancias } from './config'
 import type { JanelaSilencio } from './quiet-hours'
 
@@ -169,15 +169,23 @@ export async function enfileirarEnvio(
       continue
     }
 
-    // §5.3 regra 8: sem instância disponível, reagenda em vez de queimar o job.
+    /*
+     * Qual chip vai mandar (§7.3). A escolha aqui olha só o que é estável —
+     * existe, ligado, não banido — porque um passo agendado para +20h não pode
+     * ser decidido pelo teto de HOJE. O ritmo instantâneo é da fila daquele
+     * chip e da checagem no momento do envio.
+     */
     let instanciaId: string | null = null
     if (canal === 'whatsapp') {
-      const escolha = escolherInstancia(instancias, agora)
-      if (!escolha.escolhida) {
-        resultados.push({ canal, situacao: 'falhou', motivo: 'sem_instancia_disponivel' })
+      const escolhida = escolherParaAgendamento(instancias)
+      if (!escolhida) {
+        // Não é indisponibilidade passageira: a organização não tem WhatsApp
+        // utilizável. Vira linha para o histórico explicar, em vez de sumir.
+        resultados.push({ canal, situacao: 'pulado', motivo: 'sem_numero_conectado' })
+        await registrarPulo(tx, pedido, canal, variante?.id ?? null, 'sem_numero_conectado', agora)
         continue
       }
-      instanciaId = escolha.escolhida.id
+      instanciaId = escolhida.id
     }
 
     const [linha] = await tx
