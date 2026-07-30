@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
-import { db } from '@/db'
+import { db, withTenant } from '@/db'
 import { auditLog, users } from '@/db/schema'
 import { isConfigError } from '@/env'
 import { classifyDbError } from '@/lib/db-errors'
@@ -85,6 +85,7 @@ export async function entrarAction(
       .select({
         id: users.id,
         orgId: users.orgId,
+        role: users.role,
         passwordHash: users.passwordHash,
         active: users.active,
       })
@@ -107,18 +108,34 @@ export async function entrarAction(
     await setSessionCookie(token, session.expiresAt)
     await resetAttempts('login', `${ip ?? 'sem-ip'}:${email}`)
 
-    await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id))
+    /*
+     * A partir daqui a organização é conhecida, então a escrita acontece com
+     * contexto de tenant declarado.
+     *
+     * Não é firula: a política de `audit_log` exige `org_id =
+     * mandafy_current_org()`, e sem contexto a comparação é com NULL — a
+     * inserção é rejeitada e o login inteiro falha. Poderíamos afrouxar a
+     * política, como foi preciso em `organizations`, cuja leitura acontece
+     * antes de sabermos a organização. Aqui não: o usuário acabou de ser
+     * autenticado. Declarar o contexto mantém o isolamento intacto.
+     */
+    await withTenant(
+      { orgId: user.orgId, userId: user.id, isAdmin: user.role === 'admin' },
+      async (tx) => {
+        await tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id))
 
-    // Sem dado pessoal no registro: só o id do usuário (§14.1).
-    await db.insert(auditLog).values({
-      orgId: user.orgId,
-      userId: user.id,
-      action: 'auth.login',
-      entity: 'user',
-      entityId: user.id,
-      ip,
-      userAgent: userAgent?.slice(0, 500) ?? null,
-    })
+        // Sem dado pessoal no registro: só o id do usuário (§14.1).
+        await tx.insert(auditLog).values({
+          orgId: user.orgId,
+          userId: user.id,
+          action: 'auth.login',
+          entity: 'user',
+          entityId: user.id,
+          ip,
+          userAgent: userAgent?.slice(0, 500) ?? null,
+        })
+      },
+    )
   } catch (error) {
     // Sem e-mail nem senha no log (§14.1) — só o motivo técnico.
     log.error('falha ao processar entrada', {
