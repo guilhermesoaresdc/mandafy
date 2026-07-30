@@ -5,6 +5,7 @@ import postgres from 'postgres'
 import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { listarPlataformas } from '@/db/queries/sources'
+import { buscarMensagem, chaveEmUso, listarMensagens } from '@/db/queries/messages'
 
 /**
  * Consultas das telas, EXECUTADAS contra um Postgres de verdade.
@@ -136,5 +137,94 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
     } finally {
       await admin`DELETE FROM organizations WHERE id = ${vazia}`
     }
+  })
+
+  describe('mensagens (§3.4, §6.1)', () => {
+    const MENSAGEM = uid('c9')
+
+    it('lista com os canais ligados e as variantes customizadas', async () => {
+      await admin.begin(async (tx) => {
+        await tx`INSERT INTO messages (id, org_id, key, name, body) VALUES
+          (${MENSAGEM}, ${ORG}, 'pix_lembrete_1', 'Lembrete de PIX', 'Oi {{nome}}')`
+        await tx`INSERT INTO message_variants (message_id, channel, enabled, synced, body) VALUES
+          (${MENSAGEM}, 'whatsapp', true,  true,  NULL),
+          (${MENSAGEM}, 'telegram', true,  true,  NULL),
+          (${MENSAGEM}, 'email',    false, true,  NULL),
+          (${MENSAGEM}, 'sms',      true,  false, 'Oi {{nome}}, curto')`
+      })
+
+      try {
+        const lista = await comoUsuario(listarMensagens)
+        const mensagem = lista.find((m) => m.key === 'pix_lembrete_1')
+
+        expect(mensagem?.canaisAtivos).toEqual(['whatsapp', 'sms', 'telegram'])
+        expect(mensagem?.customizadas).toBe(1)
+      } finally {
+        await admin`DELETE FROM messages WHERE id = ${MENSAGEM}`
+      }
+    })
+
+    it('busca traz a mensagem com as quatro variantes', async () => {
+      await admin.begin(async (tx) => {
+        await tx`INSERT INTO messages (id, org_id, key, name, body) VALUES
+          (${MENSAGEM}, ${ORG}, 'boas_vindas', 'Boas-vindas', 'Oi')`
+        await tx`INSERT INTO message_variants (message_id, channel) VALUES
+          (${MENSAGEM}, 'whatsapp'), (${MENSAGEM}, 'telegram'),
+          (${MENSAGEM}, 'email'), (${MENSAGEM}, 'sms')`
+      })
+
+      try {
+        const completa = await comoUsuario((tx) => buscarMensagem(tx, MENSAGEM))
+        expect(completa?.mensagem.key).toBe('boas_vindas')
+        expect(completa?.variantes).toHaveLength(4)
+      } finally {
+        await admin`DELETE FROM messages WHERE id = ${MENSAGEM}`
+      }
+    })
+
+    it('mensagem de outra organização não é encontrada', async () => {
+      const outraOrg = uid('f1')
+      const outraMsg = uid('f2')
+
+      await admin.begin(async (tx) => {
+        await tx`DELETE FROM organizations WHERE id = ${outraOrg}`
+        await tx`INSERT INTO organizations (id, name, slug) VALUES (${outraOrg}, 'Vizinha', 'consultas-msg-vizinha')`
+        await tx`INSERT INTO messages (id, org_id, key, name, body) VALUES
+          (${outraMsg}, ${outraOrg}, 'secreta', 'Secreta', 'x')`
+      })
+
+      try {
+        // RLS devolve nada; a página trata como inexistente, sem confirmar
+        // que a mensagem existe em outro lugar.
+        expect(await comoUsuario((tx) => buscarMensagem(tx, outraMsg))).toBeNull()
+      } finally {
+        await admin`DELETE FROM organizations WHERE id = ${outraOrg}`
+      }
+    })
+
+    it('chaveEmUso só enxerga a própria organização', async () => {
+      const outraOrg = uid('f3')
+      const outraMsg = uid('f4')
+
+      await admin.begin(async (tx) => {
+        await tx`DELETE FROM organizations WHERE id = ${outraOrg}`
+        await tx`INSERT INTO organizations (id, name, slug) VALUES (${outraOrg}, 'Vizinha 2', 'consultas-msg-viz2')`
+        await tx`INSERT INTO messages (id, org_id, key, name, body) VALUES
+          (${outraMsg}, ${outraOrg}, 'compartilhada', 'X', 'x')`
+        await tx`INSERT INTO messages (id, org_id, key, name, body) VALUES
+          (${MENSAGEM}, ${ORG}, 'minha', 'Minha', 'x')`
+      })
+
+      try {
+        // A mesma chave em outra org não conflita — a unicidade é (org_id, key).
+        expect(await comoUsuario((tx) => chaveEmUso(tx, ORG, 'compartilhada'))).toBe(false)
+        expect(await comoUsuario((tx) => chaveEmUso(tx, ORG, 'minha'))).toBe(true)
+        // Editar a própria mensagem não conflita consigo mesma.
+        expect(await comoUsuario((tx) => chaveEmUso(tx, ORG, 'minha', MENSAGEM))).toBe(false)
+      } finally {
+        await admin`DELETE FROM messages WHERE id = ${MENSAGEM}`
+        await admin`DELETE FROM organizations WHERE id = ${outraOrg}`
+      }
+    })
   })
 })
