@@ -48,14 +48,18 @@ docker/          Dockerfile, Caddyfile, init de banco
    de uma interface comum. Trocar de provedor = trocar variável de ambiente (§8).
 4. **Cancelamento por chave** (§5.1) é a lógica mais crítica do sistema. Tem teste
    próprio; não altere sem rodar `npm test`.
-5. **Nenhum dado pessoal em log de aplicação** (§14.1). Telefone, e-mail, CPF e
+5. **Query nova = teste que a executa.** `tsc`, `eslint` e `next build` passam
+   com SQL que o Postgres recusa. Consultas de tela moram em `src/db/queries/` e
+   são exercitadas em `tests/consultas.test.ts`; a renderização, em
+   `npm run fumaca`.
+6. **Nenhum dado pessoal em log de aplicação** (§14.1). Telefone, e-mail, CPF e
    nome nunca vão para stdout.
-6. **Credenciais de provedor criptografadas em repouso** (AES-256-GCM,
+7. **Credenciais de provedor criptografadas em repouso** (AES-256-GCM,
    `ENCRYPTION_KEY` no ambiente, nunca no banco).
-7. **Português na interface, inglês no código.** Rótulos, mensagens de erro e
+8. **Português na interface, inglês no código.** Rótulos, mensagens de erro e
    nomes de rota em pt-BR (`/mensagens`, `/fluxos`); identificadores, tipos e
    nomes de arquivo em inglês. Comentários em português quando explicam decisão.
-8. **Copy da interface segue §11.7**: nomeie pelo que a pessoa controla, não pela
+9. **Copy da interface segue §11.7**: nomeie pelo que a pessoa controla, não pela
    implementação ("Conectar plataforma", não "Webhook config").
 
 ## Comandos
@@ -70,14 +74,15 @@ docker/          Dockerfile, Caddyfile, init de banco
 | `npm run db:seed` | Popula org, admin, mensagens e fluxos-modelo |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Vitest |
+| `npm run fumaca` | Sobe o app compilado e abre cada tela autenticada |
 
 ## Fases de implementação (§15)
 
 Uma fase por vez, cada uma funcionando de ponta a ponta.
 
 - [x] **1 — Fundação**: compose, schema, migrations, auth, RBAC, design system, navegação
-- [ ] **2 — Ingestão**: webhook de entrada, dedupe, mapeamento visual, normalização
-- [ ] **3 — Mensagens**: CRUD, variantes por canal, compilação, spintax, pré-visualização
+- [x] **2 — Ingestão**: webhook de entrada, dedupe, mapeamento visual, normalização
+- [x] **3 — Mensagens**: CRUD, variantes por canal, compilação, spintax, pré-visualização
 - [ ] **4 — Entrega**: BullMQ, adaptadores dos 4 canais, jitter, janela de silêncio, guardas
 - [ ] **5 — Fluxos**: cadências, agendamento em cascata, cancelamento por chave
 - [ ] **6 — Histórico e painel**: SSE ao vivo, partições, dashboard, barra de pulso
