@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { Button, Card, CardBody, CardHeader, CardTitle, Separator } from '@/components/ui'
 import { USER_ROLE_LABELS } from '@/db/schema/enums'
@@ -55,8 +56,24 @@ export default async function ConfiguracoesPage() {
         </Card>
       </div>
 
-      {/* TODO Fase 2: conectar plataforma. Fase 8: chaves de API, webhooks de
-          saída, exportação e anonimização de dados (LGPD). */}
+      <div className="mt-4 max-w-3xl">
+        <Card>
+          <CardBody className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-ink">Plataformas</p>
+              <p className="mt-0.5 text-2xs text-ink-2">
+                De onde os eventos chegam. Conecte sua plataforma de sorteio e combine os campos.
+              </p>
+            </div>
+            <Button asChild variant="secondary" size="sm">
+              <Link href="/configuracoes/plataformas">Abrir</Link>
+            </Button>
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* TODO Fase 8: chaves de API, webhooks de saída, exportação e
+          anonimização de dados (LGPD). */}
     </SessionFrame>
   )
 }
