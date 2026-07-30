@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { desc, sql } from 'drizzle-orm'
 import { withTenant } from '@/db'
-import { eventsRaw, sources } from '@/db/schema'
+import { listarPlataformas } from '@/db/queries/sources'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, EmptyState } from '@/components/ui'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
@@ -14,23 +13,7 @@ export const dynamic = 'force-dynamic'
 export default async function PlataformasPage() {
   const user = await requireAdmin()
 
-  const lista = await withTenant(tenantOf(user), async (tx) =>
-    tx
-      .select({
-        id: sources.id,
-        name: sources.name,
-        active: sources.active,
-        ingestToken: sources.ingestToken,
-        createdAt: sources.createdAt,
-        // Quantos eventos chegaram, para a pessoa saber se a conexão está viva.
-        recebidos: sql<number>`(
-          SELECT count(*)::int FROM ${eventsRaw}
-          WHERE ${eventsRaw.sourceId} = ${sources.id}
-        )`,
-      })
-      .from(sources)
-      .orderBy(desc(sources.createdAt)),
-  )
+  const lista = await withTenant(tenantOf(user), listarPlataformas)
 
   return (
     <SessionFrame

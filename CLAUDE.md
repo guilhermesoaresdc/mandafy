@@ -26,6 +26,7 @@ src/
     shell/       casca do app: navegação em sessões, cabeçalho, paleta ⌘K
   db/
     schema/      tabelas Drizzle, um arquivo por domínio
+    queries/     consultas reaproveitadas pelas telas — testáveis contra o banco
     migrate.ts   aplica drizzle/*.sql
     seed.ts      organização, admin, mensagens e fluxos-modelo
   lib/
