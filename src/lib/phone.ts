@@ -85,6 +85,23 @@ export function toE164(input: string | null | undefined): string | null {
   return resultado.ok ? resultado.e164 : null
 }
 
+/**
+ * Formato de leitura: `(11) 98888-7777`. É o que o filtro `|telefone` (§6.3)
+ * coloca no corpo da mensagem — ninguém lê `+5511988887777` com naturalidade.
+ *
+ * Guarda-se sempre E.164; esta função é só apresentação. Número estrangeiro ou
+ * que não normaliza volta como veio, sem inventar máscara brasileira.
+ */
+export function formatPhoneBR(input: string | null | undefined): string | null {
+  const e164 = toE164(input)
+  if (!e164) return null
+
+  const match = /^\+55(\d{2})(\d{4,5})(\d{4})$/.exec(e164)
+  if (!match) return e164
+
+  return `(${match[1]}) ${match[2]}-${match[3]}`
+}
+
 /** Um E.164 brasileiro de celular tem 9 dígitos após o DDD. */
 export function isMobileBR(e164: string): boolean {
   const match = /^\+55(\d{2})(\d{8,9})$/.exec(e164)
