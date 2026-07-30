@@ -85,6 +85,6 @@ Uma fase por vez, cada uma funcionando de ponta a ponta.
 - [x] **3 — Mensagens**: CRUD, variantes por canal, compilação, spintax, pré-visualização
 - [x] **4 — Entrega**: BullMQ, adaptadores dos 4 canais, jitter, janela de silêncio, guardas
 - [x] **5 — Fluxos**: cadências, agendamento em cascata, cancelamento por chave
-- [ ] **6 — Histórico e painel**: SSE ao vivo, partições, dashboard, barra de pulso
+- [x] **6 — Histórico e painel**: SSE ao vivo, partições, dashboard, barra de pulso
 - [ ] **7 — CRM**: leads virtualizados, kanban, distribuição, RLS por consultor
 - [ ] **8 — API e polimento**: API pública, chaves, webhooks de saída, LGPD
