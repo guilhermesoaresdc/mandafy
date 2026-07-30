@@ -232,3 +232,71 @@ describe.skipIf(!habilitado)('RLS — isolamento entre organizações e consulto
     expect(atividades).toHaveLength(0)
   })
 })
+
+/**
+ * Escrita em tabela de tenant SEM contexto declarado.
+ *
+ * Este é o modo de falha que derrubou o login em produção: a Server Action
+ * gravava em `audit_log` fora de withTenant(), a política comparava org_id com
+ * NULL, e a inserção era rejeitada — levando junto o login inteiro.
+ *
+ * A política está certa; quem estava errado era o chamador. Estes testes
+ * fixam o contrato: sem contexto não escreve, com contexto escreve.
+ */
+describe.skipIf(!process.env.TEST_DATABASE_URL || !process.env.TEST_DATABASE_URL_ADMIN)(
+  'escrita exige contexto de tenant',
+  () => {
+    let admin: postgres.Sql
+    let app: postgres.Sql
+    const ORG = '00000000-0000-4000-8000-0000000000c1'
+    const USER = '00000000-0000-4000-8000-0000000000c2'
+
+    beforeAll(async () => {
+      admin = postgres(process.env.TEST_DATABASE_URL_ADMIN!, { max: 1, onnotice: () => {} })
+      app = postgres(process.env.TEST_DATABASE_URL!, { max: 2, onnotice: () => {} })
+      await admin`DELETE FROM organizations WHERE id = ${ORG}`
+      await admin`INSERT INTO organizations (id, name, slug) VALUES (${ORG}, 'Org C', 'rls-org-c')`
+      await admin`INSERT INTO users (id, org_id, name, email, password_hash, role)
+                  VALUES (${USER}, ${ORG}, 'Admin C', 'rls-c@teste.local', 'x', 'admin')`
+    })
+
+    afterAll(async () => {
+      if (admin) {
+        await admin`DELETE FROM organizations WHERE id = ${ORG}`
+        await admin.end({ timeout: 5 })
+      }
+      if (app) await app.end({ timeout: 5 })
+    })
+
+    it('sem contexto, o INSERT em audit_log é rejeitado pela política', async () => {
+      await expect(
+        app`INSERT INTO audit_log (org_id, user_id, action) VALUES (${ORG}, ${USER}, 'auth.login')`,
+      ).rejects.toThrow(/row-level security/i)
+    })
+
+    it('com contexto, o mesmo INSERT passa', async () => {
+      await app.begin(async (tx) => {
+        await tx`SELECT set_config('app.org_id', ${ORG}, true),
+                        set_config('app.user_id', ${USER}, true),
+                        set_config('app.is_admin', 'true', true)`
+        await tx`INSERT INTO audit_log (org_id, user_id, action)
+                 VALUES (${ORG}, ${USER}, 'auth.login')`
+      })
+
+      const [linha] = await admin<{ total: number }[]>`
+        SELECT count(*)::int AS total FROM audit_log WHERE org_id = ${ORG}
+      `
+      expect(linha?.total).toBe(1)
+    })
+
+    it('com contexto de OUTRA organização, o INSERT é rejeitado', async () => {
+      await expect(
+        app.begin(async (tx) => {
+          await tx`SELECT set_config('app.org_id', ${'00000000-0000-4000-8000-0000000000ff'}, true)`
+          await tx`INSERT INTO audit_log (org_id, user_id, action)
+                   VALUES (${ORG}, ${USER}, 'auth.login')`
+        }),
+      ).rejects.toThrow(/row-level security/i)
+    })
+  },
+)
