@@ -93,7 +93,18 @@ export function classifyDbError(error: unknown): DbFailure {
   // Do mais interno para o mais externo: a causa raiz é a que interessa.
   for (let i = chain.length - 1; i >= 0; i -= 1) {
     const resultado = classifyOne(chain[i])
-    if (resultado.reason !== 'erro_desconhecido') return resultado
+    if (resultado.reason !== 'erro_desconhecido') {
+      /*
+       * O detalhe acompanha TODA falha, não só a não catalogada. A mensagem do
+       * Postgres para 42501 é "permission denied for table X" — sem ela, a
+       * dica manda conceder permissão sem dizer em quê, e o diagnóstico volta
+       * a depender de adivinhação.
+       */
+      return {
+        ...resultado,
+        detail: redactCredentials(deepestMessage(chain)).slice(0, 300),
+      }
+    }
   }
 
   const raiz = chain[chain.length - 1]
