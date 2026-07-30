@@ -1,21 +1,29 @@
 /**
  * Worker: processo long-running que consome as filas BullMQ.
  *
- * Na Fase 1 ele só faz a manutenção das partições — mas já sobe com a
- * estrutura de filas de §7.1 no lugar, com desligamento gracioso e log sem
- * dado pessoal.
+ * Consome as filas de §7.1 — uma por canal, e uma POR INSTÂNCIA no WhatsApp,
+ * porque o limite de 1 msg/4s pertence ao chip e não ao canal. Também cuida da
+ * manutenção das partições, do avanço da escada de aquecimento (§7.3) e das
+ * varreduras que retomam trabalho que não chegou à fila.
+ *
+ * Log sem nenhum dado pessoal (§14.1): id de notificação e de instância, nunca
+ * telefone, e-mail ou nome.
  *
  * Uso: npm run worker  |  npm run worker:dev
  */
 
-import { Worker, type Job } from 'bullmq'
-import { sql } from 'drizzle-orm'
-import { closeDb, db } from '@/db'
+import { Worker, UnrecoverableError, type Job } from 'bullmq'
+import { eq, sql } from 'drizzle-orm'
+import { closeDb, db, withTenant } from '@/db'
+import { waInstances } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
-import { closeQueues, getQueue, limitsFor, QUEUE_NAMES } from '@/lib/queue'
+import { closeQueues, getQueue, limitsFor, QUEUE_NAMES, waQueueName } from '@/lib/queue'
 import { closeRedis, getQueueConnection } from '@/lib/redis'
 import { purgeExpiredSessions } from '@/lib/auth/session'
 import { normalizeRawEvent, reprocessPending, type NormalizeOutcome } from '@/lib/ingest/normalize'
+import { marcarEsgotado, processarEnvio, type DadosJobEnvio } from '@/lib/delivery/send'
+import { reenfileirarPendentes } from '@/lib/delivery/enqueue'
+import { avaliarEscada, limitesDoEstagio } from '@/lib/delivery/warmup'
 
 const log = createLogger('worker')
 
@@ -23,7 +31,20 @@ const MAINTENANCE_JOB = 'maintain'
 /** Minuto 17 para não competir com todo cron do mundo, que roda no minuto 0. */
 const MAINTENANCE_CRON = '17 * * * *'
 
-async function runMaintenance(job: Job): Promise<{ partitions: string; sessions: number; retomados: number }> {
+const ZERAR_JOB = 'zerar-contadores'
+/** 00:05 do fuso de operação — depois da virada, não em cima dela. */
+const ZERAR_CRON = '5 0 * * *'
+const DEFAULT_TZ = process.env.DEFAULT_TIMEZONE ?? 'America/Sao_Paulo'
+
+type ResultadoManutencao = { partitions: string; sessions: number; retomados: number } | { zerados: number }
+
+async function runMaintenance(job: Job): Promise<ResultadoManutencao> {
+  if (job.name === ZERAR_JOB) {
+    const zerados = await zerarContadoresDiarios()
+    log.info('contadores diários zerados', { instancias: zerados })
+    return { zerados }
+  }
+
   log.info('manutenção iniciada', { jobId: job.id })
 
   const [row] = await db.execute<{ result: string }>(
@@ -41,8 +62,117 @@ async function runMaintenance(job: Job): Promise<{ partitions: string; sessions:
    */
   const retomados = await reprocessPending(200)
 
-  log.info('manutenção concluída', { partitions, expiredSessions: sessions, retomados })
+  // Envios gravados que não chegaram à fila — mesma rede de segurança, do
+  // outro lado do sistema.
+  const reenviados = await withTenant(
+    { orgId: '00000000-0000-0000-0000-000000000000', userId: '00000000-0000-0000-0000-000000000000', isAdmin: true },
+    (tx) => reenfileirarPendentes(tx),
+  ).catch(() => 0)
+
+  const escadas = await avancarAquecimento()
+
+  log.info('manutenção concluída', {
+    partitions,
+    expiredSessions: sessions,
+    retomados,
+    reenviados,
+    escadas,
+  })
   return { partitions, sessions, retomados }
+}
+
+/**
+ * Move a escada de aquecimento (§7.3).
+ *
+ * Roda de hora em hora junto da manutenção. A progressão é automática, mas só
+ * sobe com falha abaixo de 3% — e qualquer degradação REBAIXA. Um número que
+ * sobe rápido demais é um número banido em duas semanas.
+ */
+async function avancarAquecimento(): Promise<number> {
+  const agora = new Date()
+  const instancias = await db.select().from(waInstances)
+  let mexidas = 0
+
+  for (const instancia of instancias) {
+    const decisao = avaliarEscada(
+      {
+        warmupStage: instancia.warmupStage,
+        warmupStartedAt: instancia.warmupStartedAt,
+        failureRate24h: Number(instancia.failureRate24h),
+      },
+      agora,
+    )
+
+    if (decisao.acao === 'manter') continue
+
+    const limites = limitesDoEstagio(decisao.estagio)
+    await db
+      .update(waInstances)
+      .set({ warmupStage: decisao.estagio, ...limites, updatedAt: agora })
+      .where(eq(waInstances.id, instancia.id))
+
+    // Sem telefone nem nome de contato no log (§14.1) — só o id da instância.
+    log.info('estágio de aquecimento alterado', {
+      instanceId: instancia.id,
+      acao: decisao.acao,
+      de: instancia.warmupStage,
+      para: decisao.estagio,
+      motivo: decisao.motivo,
+    })
+    mexidas += 1
+  }
+
+  return mexidas
+}
+
+/**
+ * Zera o contador diário de cada instância.
+ *
+ * Sem isto, `sentToday` cresceria para sempre e toda instância bateria o teto
+ * no segundo dia — a operação inteira pararia em silêncio.
+ */
+async function zerarContadoresDiarios(): Promise<number> {
+  const linhas = await db
+    .update(waInstances)
+    .set({ sentToday: 0, updatedAt: new Date() })
+    .where(sql`${waInstances.sentToday} > 0`)
+    .returning({ id: waInstances.id })
+
+  return linhas.length
+}
+
+/**
+ * Um envio (§8.1).
+ *
+ * O adaptador do canal já devolve `reenviavel`; aqui esse sinal vira decisão de
+ * fila. `UnrecoverableError` faz o BullMQ desistir na hora — é o que impede a
+ * fila de insistir num número sem WhatsApp ou num e-mail inválido, que só
+ * queima reputação e, no SMS, dinheiro.
+ */
+async function runEnvio(job: Job<DadosJobEnvio>): Promise<string> {
+  const resultado = await processarEnvio(job.data)
+
+  switch (resultado.desfecho) {
+    case 'enviado':
+    case 'cancelado':
+    case 'ja_processado':
+      return resultado.desfecho
+
+    case 'falhou': {
+      if (!resultado.reenviavel) {
+        throw new UnrecoverableError(resultado.codigo)
+      }
+
+      // 429 do Telegram traz `retry_after`; respeitar é obrigatório, porque
+      // ignorar estende o bloqueio do bot inteiro (§7.1).
+      if (resultado.esperarSegundos !== undefined) {
+        await job.moveToDelayed(Date.now() + resultado.esperarSegundos * 1000, job.token)
+        return 'adiado'
+      }
+
+      throw new Error(resultado.codigo)
+    }
+  }
 }
 
 /**
@@ -82,6 +212,60 @@ async function main(): Promise<void> {
     limiter: { max: normalizeLimits.max, duration: normalizeLimits.duration },
   })
 
+  /*
+   * Uma fila por canal (§7.1), com os limites literais da tabela da spec. O
+   * WhatsApp é a exceção: a fila é POR INSTÂNCIA, porque o limite de 1 msg/4s
+   * pertence ao chip. Uma fila só de "whatsapp" faria dois números somarem o
+   * dobro do ritmo seguro no mesmo aparelho.
+   */
+  const canaisSimples = [QUEUE_NAMES.email, QUEUE_NAMES.sms, QUEUE_NAMES.telegram] as const
+  const canalWorkers = canaisSimples.map((nome) => {
+    const l = limitsFor(nome)
+    return new Worker<DadosJobEnvio>(nome, runEnvio, {
+      connection: getQueueConnection(),
+      concurrency: l.concurrency,
+      limiter: { max: l.max, duration: l.duration },
+    })
+  })
+
+  // Uma fila por chip conectado. Instância nova exige reiniciar o worker — é
+  // aceitável nesta fase e está anotado como dívida na tela de canais.
+  const instancias = await db
+    .select({ id: waInstances.id })
+    .from(waInstances)
+    .where(eq(waInstances.active, true))
+
+  const waWorkers = instancias.map((instancia) => {
+    const nome = waQueueName(instancia.id)
+    const l = limitsFor(nome)
+    return new Worker<DadosJobEnvio>(nome, runEnvio, {
+      connection: getQueueConnection(),
+      concurrency: l.concurrency,
+      limiter: { max: l.max, duration: l.duration },
+    })
+  })
+
+  const deEnvio = [...canalWorkers, ...waWorkers]
+
+  for (const worker of deEnvio) {
+    worker.on('failed', (job, error) => {
+      if (!job) return
+      log.error('envio falhou', {
+        queue: worker.name,
+        jobId: job.id,
+        tentativa: job.attemptsMade,
+        error: error.message,
+      })
+
+      // Esgotou as tentativas: fecha o estado em `dead`, senão a notificação
+      // ficaria para sempre em `failed` e o painel mostraria "vai tentar de
+      // novo" para algo que ninguém mais vai tentar (§8.1).
+      if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        void marcarEsgotado(job.data, error.message)
+      }
+    })
+  }
+
   for (const [nome, worker] of [
     [QUEUE_NAMES.maintenance, maintenanceWorker],
     [QUEUE_NAMES.normalize, normalizeWorker],
@@ -101,15 +285,28 @@ async function main(): Promise<void> {
   )
   await maintenanceQueue.add(MAINTENANCE_JOB, {}, { jobId: `maintenance-boot-${Date.now()}` })
 
+  /*
+   * Virada do dia no fuso de operação: zera `sent_today` de cada instância.
+   * Sem isto o contador cresceria para sempre, toda instância bateria o teto no
+   * segundo dia, e a operação pararia sem erro nenhum aparecer.
+   */
+  await maintenanceQueue.add(
+    ZERAR_JOB,
+    {},
+    { repeat: { pattern: ZERAR_CRON, tz: DEFAULT_TZ }, jobId: 'zerar-contadores' },
+  )
+
   log.info('worker no ar', {
-    queues: [QUEUE_NAMES.maintenance, QUEUE_NAMES.normalize],
+    queues: [
+      QUEUE_NAMES.maintenance,
+      QUEUE_NAMES.normalize,
+      ...canaisSimples,
+      ...waWorkers.map((w) => w.name),
+    ],
     cron: MAINTENANCE_CRON,
   })
 
-  // TODO Fase 4: workers de canal — wa:{instance}, email, sms, telegram —
-  // com os rate limits de §7.1 e circuit breaker por provedor (§13.2).
-
-  const workers = [maintenanceWorker, normalizeWorker]
+  const workers = [maintenanceWorker, normalizeWorker, ...deEnvio]
   let encerrando = false
 
   async function shutdown(signal: string): Promise<void> {

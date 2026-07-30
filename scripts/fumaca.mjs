@@ -81,7 +81,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/configuracoes/plataformas', '/painel']) {
+  for (const rota of ['/mensagens', '/canais', '/configuracoes/plataformas', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
