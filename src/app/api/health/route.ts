@@ -38,18 +38,26 @@ export async function GET() {
     await db.execute(sql`SELECT 1`)
     database = { ok: true }
 
-    // Conectar não basta: sem as migrations aplicadas o login falha do mesmo
-    // jeito, e é o erro mais comum em ambiente novo.
-    const rows = await db.execute<{ existe: boolean }>(
-      sql`SELECT to_regclass('public.users') IS NOT NULL AS existe`,
-    )
-    schema = rows[0]?.existe
-      ? { ok: true }
-      : {
-          ok: false,
-          reason: 'migrations_pendentes',
-          hint: 'O banco respondeu mas está vazio. Rode: npm run db:migrate && npm run db:seed',
-        }
+    /*
+     * Conectar não basta. Esta verificação precisa LER uma tabela de verdade,
+     * e não apenas conferir que ela existe: `to_regclass` responde sem exigir
+     * privilégio nenhum, então o healthcheck ficava verde enquanto o papel da
+     * aplicação não tinha permissão de SELECT — e o login falhava.
+     *
+     * O `count` sobre `users` exerce o caminho real: privilégio na tabela,
+     * política de RLS e o tipo citext do e-mail.
+     */
+    const rows = await db.execute<{ total: number }>(sql`SELECT count(*)::int AS total FROM users`)
+    const total = rows[0]?.total ?? 0
+
+    schema =
+      total > 0
+        ? { ok: true }
+        : {
+            ok: false,
+            reason: 'migrations_pendentes',
+            hint: 'O banco responde e a tabela existe, mas não há nenhum usuário. Rode o seed: npm run db:seed',
+          }
   } catch (error) {
     database = falha(error)
     schema = { ok: false, reason: 'nao_verificado' }
