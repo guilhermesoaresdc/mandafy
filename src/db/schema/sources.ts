@@ -1,14 +1,19 @@
 import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { organizations } from './organizations'
 import { SOURCE_PLATFORMS } from './enums'
+import type { SourceMapping as MappingType } from '@/lib/ingest/mapping'
 
-/** Mapeamento declarativo de payload → evento canônico (§4.2). */
-export type SourceMapping = {
-  event_path?: string
-  event_map?: Record<string, string>
-  contact?: Record<string, string>
-  fields?: Record<string, string | { path: string; transform?: string }>
-}
+/**
+ * Mapeamento declarativo de payload → evento canônico (§4.2).
+ *
+ * O tipo vem do schema Zod que valida e executa o mapeamento, para que exista
+ * uma definição só: duas declarações do mesmo formato divergem no primeiro
+ * campo novo, e a divergência só aparece em produção.
+ *
+ * Import de tipo — apagado na compilação, então o schema não carrega o motor
+ * de ingestão para dentro de si.
+ */
+export type { SourceMapping } from '@/lib/ingest/mapping'
 
 /** Cada plataforma de sorteio plugada (§3.1). */
 export const sources = pgTable(
@@ -24,7 +29,7 @@ export const sources = pgTable(
     ingestToken: text('ingest_token').notNull().unique(),
     /** Opcional: se a plataforma assinar o corpo, validamos HMAC (§4.3). */
     hmacSecret: text('hmac_secret'),
-    mapping: jsonb('mapping').$type<SourceMapping>().notNull().default({}),
+    mapping: jsonb('mapping').$type<MappingType>().notNull().default({} as MappingType),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
