@@ -186,6 +186,43 @@ export function escolherInstancia(
   return { escolhida: aptas[aptas.length - 1]! }
 }
 
+/**
+ * Escolhe a instância no momento do AGENDAMENTO, que é diferente do envio.
+ *
+ * Um passo marcado para daqui a 20 horas não pode ser decidido pelo teto de
+ * hoje nem pelo intervalo desde o último envio: às 11h de amanhã, `sentToday`
+ * já terá sido zerado e o intervalo há muito terá passado. Perguntar
+ * "está disponível agora?" faria a cascata do PIX perder os passos longos.
+ *
+ * Então aqui só o que é ESTÁVEL conta: a instância existe, está ligada e não
+ * foi banida. O ritmo instantâneo é responsabilidade da fila daquele chip, que
+ * já roda a 1 msg/4s, e da checagem no momento do envio.
+ *
+ * Desconectada continua elegível de propósito — chip cai e volta o tempo todo,
+ * e descartar um envio de +2h por causa de uma queda de agora seria perder
+ * mensagem por um problema que já terá passado.
+ */
+export function escolherParaAgendamento(
+  instancias: readonly InstanciaWhatsapp[],
+  aleatorio: () => number = Math.random,
+): InstanciaWhatsapp | null {
+  const elegiveis = instancias.filter((i) => i.active && i.status !== 'banido')
+  if (elegiveis.length === 0) return null
+
+  // Peso ponderado pelo teto, não pela folga: a folga de hoje não diz nada
+  // sobre a capacidade de amanhã.
+  const pesos = elegiveis.map((i) => Math.max(1, i.weight) * Math.max(1, i.dailyCap))
+  const total = pesos.reduce((soma, p) => soma + p, 0)
+
+  let sorteio = aleatorio() * total
+  for (let i = 0; i < elegiveis.length; i += 1) {
+    sorteio -= pesos[i]!
+    if (sorteio < 0) return elegiveis[i]!
+  }
+
+  return elegiveis[elegiveis.length - 1]!
+}
+
 /** Semáforo do painel de saúde (§7.3). */
 export type Semaforo = 'verde' | 'ambar' | 'vermelho'
 

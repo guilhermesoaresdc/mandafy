@@ -122,8 +122,12 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     const enfileirados = resultados.filter((r) => r.situacao === 'enfileirado')
     expect(enfileirados.map((r) => r.canal).sort()).toEqual(['email', 'telegram'])
 
-    // WhatsApp não sai: nenhuma instância conectada nesta organização.
-    expect(resultados.find((r) => r.canal === 'whatsapp')).toMatchObject({ situacao: 'falhou' })
+    // WhatsApp não sai: nenhum número conectado nesta organização. Vira linha
+    // para o histórico explicar, em vez de o envio sumir sem rastro.
+    expect(resultados.find((r) => r.canal === 'whatsapp')).toMatchObject({
+      situacao: 'pulado',
+      motivo: 'sem_numero_conectado',
+    })
 
     const linhas = await notificacoes()
     const telegram = linhas.find((l) => l.channel === 'telegram')
@@ -227,6 +231,33 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     const linha = (await notificacoes()).find((l) => l.channel === 'telegram')
     expect(linha).toMatchObject({ status: 'failed', error_code: 'variavel_ausente' })
     expect(linha?.rendered_body).toBeNull()
+  })
+
+  it('grava o queue_job_id — a linha precisa ser reencontrável', async () => {
+    /*
+     * Regressão de um bug caro e silencioso: o Postgres guarda `timestamptz`
+     * com microssegundo, o `Date` do JS só tem milissegundo. A chave primária
+     * desta tabela particionada é (id, created_at), então um `now()` com
+     * microssegundos tornava a linha inalcançável por qualquer UPDATE vindo do
+     * JS. Nenhum envio conseguia gravar o próprio resultado.
+     */
+    await comoSistema((tx) =>
+      enfileirarEnvio(tx, {
+        orgId: ORG,
+        contactId: CONTATO,
+        messageId: MENSAGEM,
+        canais: ['telegram'],
+        dados: DADOS,
+      }),
+    )
+
+    const [linha] = (await admin`
+      SELECT queue_job_id, created_at = date_trunc('milliseconds', created_at) AS ms
+      FROM notifications WHERE org_id = ${ORG} AND channel = 'telegram'
+    `) as unknown as { queue_job_id: string | null; ms: boolean }[]
+
+    expect(linha?.queue_job_id).toBeTruthy()
+    expect(linha?.ms).toBe(true)
   })
 
   it('o job vai para a fila do canal, com o atraso do agendamento', async () => {
