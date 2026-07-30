@@ -83,7 +83,7 @@ Uma fase por vez, cada uma funcionando de ponta a ponta.
 - [x] **1 — Fundação**: compose, schema, migrations, auth, RBAC, design system, navegação
 - [x] **2 — Ingestão**: webhook de entrada, dedupe, mapeamento visual, normalização
 - [x] **3 — Mensagens**: CRUD, variantes por canal, compilação, spintax, pré-visualização
-- [ ] **4 — Entrega**: BullMQ, adaptadores dos 4 canais, jitter, janela de silêncio, guardas
+- [x] **4 — Entrega**: BullMQ, adaptadores dos 4 canais, jitter, janela de silêncio, guardas
 - [ ] **5 — Fluxos**: cadências, agendamento em cascata, cancelamento por chave
 - [ ] **6 — Histórico e painel**: SSE ao vivo, partições, dashboard, barra de pulso
 - [ ] **7 — CRM**: leads virtualizados, kanban, distribuição, RLS por consultor

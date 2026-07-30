@@ -27,6 +27,22 @@ export function waQueueName(instanceId: string): string {
   return `wa:${instanceId}`
 }
 
+/**
+ * A fila de um envio.
+ *
+ * O WhatsApp é o caso especial: a fila é POR INSTÂNCIA, porque o limite de
+ * 1 msg/4s é do chip, não do canal. Sem instância não há fila — e devolver
+ * `null` obriga quem chama a tratar isso, em vez de acabar com um
+ * `getQueue(undefined)`.
+ */
+export function queueForChannel(
+  channel: 'whatsapp' | 'email' | 'sms' | 'telegram',
+  instanceId?: string | null,
+): string | null {
+  if (channel === 'whatsapp') return instanceId ? waQueueName(instanceId) : null
+  return QUEUE_NAMES[channel]
+}
+
 export type QueueLimits = {
   /** Máximo de jobs por janela. */
   max: number

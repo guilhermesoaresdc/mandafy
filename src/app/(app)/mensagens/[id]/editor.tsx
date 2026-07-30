@@ -34,6 +34,7 @@ import {
   salvarVarianteAction,
   type MensagemState,
 } from '../actions'
+import { EnviarTeste } from './enviar-teste'
 import { PreviaEmail, PreviaSms, PreviaTelegram, PreviaWhatsapp } from './previa'
 
 /**
@@ -386,6 +387,8 @@ export function EditorMensagem({
           ) : null}
         </div>
       </form>
+
+      <EnviarTeste messageId={mensagem.id} />
 
       {/* ── Canais ── */}
       <Card>
