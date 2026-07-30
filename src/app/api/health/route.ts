@@ -101,6 +101,62 @@ export async function GET() {
     }
   }
 
+  /*
+   * O caminho de autenticação, verificado tabela por tabela.
+   *
+   * `validateSessionToken` junta sessions → users → organizations SEM contexto
+   * de tenant — é justamente ela que descobre a organização. Se qualquer uma
+   * das três estiver invisível nesse momento, a junção volta vazia, toda
+   * sessão válida é lida como inválida, e o sintoma é um login que "funciona"
+   * e devolve para a tela de entrada.
+   *
+   * Contar cada tabela separadamente é o que distingue "não há sessões" de
+   * "a política esconde a organização" — os dois produzem junção vazia.
+   */
+  let autenticacao: Check = { ok: false, reason: 'nao_verificado' }
+  if (schema.ok) {
+    try {
+      const [contagem] = await db.execute<{ orgs: number; usuarios: number; juncao: number }>(sql`
+        SELECT
+          (SELECT count(*)::int FROM organizations) AS orgs,
+          (SELECT count(*)::int FROM users)         AS usuarios,
+          (SELECT count(*)::int
+             FROM users u
+             INNER JOIN organizations o ON o.id = u.org_id) AS juncao
+      `)
+
+      const orgs = contagem?.orgs ?? 0
+      const usuarios = contagem?.usuarios ?? 0
+      const juncao = contagem?.juncao ?? 0
+
+      if (usuarios > 0 && orgs === 0) {
+        autenticacao = {
+          ok: false,
+          reason: 'organizacao_invisivel',
+          hint:
+            'A política de organizations esconde a linha quando não há contexto de tenant, ' +
+            'e o login precisa lê-la antes de saber a organização. Rode a migration 0011: ' +
+            'DROP POLICY IF EXISTS organizations_tenant ON organizations; ' +
+            'CREATE POLICY organizations_tenant ON organizations FOR ALL ' +
+            'USING (mandafy_current_org() IS NULL OR id = mandafy_current_org()) ' +
+            'WITH CHECK (mandafy_current_org() IS NULL OR id = mandafy_current_org());',
+          detail: `organizations=${orgs} users=${usuarios}`,
+        }
+      } else if (usuarios > 0 && juncao === 0) {
+        autenticacao = {
+          ok: false,
+          reason: 'juncao_vazia',
+          hint: 'Há usuários e organizações, mas a junção entre elas volta vazia. Confira org_id em users.',
+          detail: `organizations=${orgs} users=${usuarios} juncao=${juncao}`,
+        }
+      } else {
+        autenticacao = { ok: true, detail: `organizations=${orgs} users=${usuarios}` }
+      }
+    } catch (error) {
+      autenticacao = falha(error)
+    }
+  }
+
   let redis: Check = { ok: false }
   try {
     await getRedis().ping()
@@ -111,13 +167,13 @@ export async function GET() {
 
   // Redis fora do ar não impede login (o limite de tentativas degrada
   // graciosamente), então ele não derruba o status geral.
-  const ok = database.ok && schema.ok && escrita.ok
+  const ok = database.ok && schema.ok && escrita.ok && autenticacao.ok
 
   return NextResponse.json(
     {
       ok,
       service: 'mandafy',
-      checks: { database, schema, escrita, redis },
+      checks: { database, schema, escrita, autenticacao, redis },
       uptimeSeconds: Math.floor((Date.now() - started) / 1000),
     },
     { status: ok ? 200 : 503 },
