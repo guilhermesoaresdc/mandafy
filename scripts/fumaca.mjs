@@ -121,7 +121,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/configuracoes/plataformas', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -145,6 +145,13 @@ try {
     }
     controle.abort()
     checar('SSE /api/historico/stream', r.status === 200 && tipo.includes('text/event-stream') && primeiro.includes('pronto'), `status ${r.status}`)
+  }
+
+  // Exportação CSV dos leads.
+  {
+    const r = await get('/api/leads/csv')
+    const corpo = await r.text()
+    checar('CSV de leads', r.status === 200 && corpo.includes('lead,contato'), `status ${r.status}`)
   }
 
   // Exportação CSV do histórico.

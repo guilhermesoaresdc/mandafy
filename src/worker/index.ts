@@ -24,6 +24,8 @@ import { normalizeRawEvent, reprocessPending, type NormalizeOutcome } from '@/li
 import { marcarEsgotado, processarEnvio, type DadosJobEnvio } from '@/lib/delivery/send'
 import { reenfileirarPendentes } from '@/lib/delivery/enqueue'
 import { avaliarEscada, limitesDoEstagio } from '@/lib/delivery/warmup'
+import { varrerLeadsAtrasados } from '@/lib/crm/criar-lead'
+import { organizations } from '@/db/schema'
 
 const log = createLogger('worker')
 
@@ -71,14 +73,37 @@ async function runMaintenance(job: Job): Promise<ResultadoManutencao> {
 
   const escadas = await avancarAquecimento()
 
+  // Regras de criação de lead com atraso (§9.3): "gerou o PIX e não pagou em
+  // 24h". A checagem de "não pagou" acontece AGORA, não no evento — é o que
+  // separa um funil de leads reais de um cheio de gente que pagou depois.
+  const novosLeads = await varrerLeads()
+
   log.info('manutenção concluída', {
     partitions,
     expiredSessions: sessions,
     retomados,
     reenviados,
     escadas,
+    novosLeads,
   })
   return { partitions, sessions, retomados }
+}
+
+/** Varre os leads atrasados de cada organização (§9.3). */
+async function varrerLeads(): Promise<number> {
+  const orgs = await db.select({ id: organizations.id }).from(organizations)
+  let total = 0
+
+  for (const org of orgs) {
+    // Uma transação por organização: o RLS exige contexto de tenant, e um erro
+    // numa não pode impedir a varredura das outras.
+    total += await withTenant(
+      { orgId: org.id, userId: org.id, isAdmin: true },
+      (tx) => varrerLeadsAtrasados(tx, org.id),
+    ).catch(() => 0)
+  }
+
+  return total
 }
 
 /**

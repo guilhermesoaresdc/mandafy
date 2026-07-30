@@ -4,6 +4,7 @@ import { db, withTenant, type Tx } from '@/db'
 import { contacts, events, eventsRaw, sources } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
 import { processarEvento } from '@/lib/flows/run'
+import { criarLeadDoEvento } from '@/lib/crm/criar-lead'
 import { applyMapping, type NormalizedContact } from './mapping'
 
 /**
@@ -202,6 +203,31 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
         disparados: cadencia.fluxos.filter((f) => f.disparado).length,
       })
     }
+
+    /*
+     * Criação automática de lead (§9.3), também em transação separada. Um lead
+     * é sobre a pessoa; a cadência é sobre a mensagem. Falha de um não pode
+     * levar o outro — e nenhum dos dois pode desfazer o registro do evento.
+     */
+    const leads = await withTenant(
+      { orgId: source.orgId, userId: source.orgId, isAdmin: true },
+      (tx) =>
+        criarLeadDoEvento(tx, {
+          orgId: source.orgId,
+          tipo: normalizado.type,
+          contactId: eventId.contactId,
+          dados: normalizado.data,
+        }),
+    ).catch((erro: unknown) => {
+      log.error('falha ao criar lead', {
+        eventId: eventId.id,
+        reason: erro instanceof Error ? erro.message : 'desconhecido',
+      })
+      return []
+    })
+
+    const criados = leads.filter((r) => r.criado).length
+    if (criados > 0) log.info('leads criados', { eventId: eventId.id, criados })
 
     return {
       status: 'processado',
