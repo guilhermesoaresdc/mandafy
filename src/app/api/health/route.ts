@@ -24,6 +24,8 @@ type Check = {
   reason?: string
   /** O que fazer a respeito. */
   hint?: string
+  /** Qual objeto falhou. Sempre sem credenciais. */
+  detail?: string
 }
 
 function falha(error: unknown): Check {
@@ -63,6 +65,42 @@ export async function GET() {
     schema = { ok: false, reason: 'nao_verificado' }
   }
 
+  /*
+   * Leitura não basta. O login lê `users`, mas TAMBÉM insere em `sessions` e
+   * `audit_log` e atualiza `users` — e permissão de escrita é concedida por
+   * comando separado. Um healthcheck que só lê fica verde enquanto o login
+   * falha, o que já aconteceu duas vezes aqui.
+   *
+   * `has_table_privilege` responde sem escrever nada: nenhuma linha de teste
+   * suja o banco, e nenhuma transação é aberta à toa.
+   */
+  let escrita: Check = { ok: false, reason: 'nao_verificado' }
+  if (schema.ok) {
+    try {
+      const faltando = await db.execute<{ tabela: string; privilegio: string }>(sql`
+        SELECT t.tablename AS tabela, p.privilegio
+        FROM pg_tables t
+        CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) AS p(privilegio)
+        WHERE t.schemaname = 'public'
+          AND NOT has_table_privilege(current_user, 'public.' || quote_ident(t.tablename), p.privilegio)
+        ORDER BY 1, 2
+        LIMIT 20
+      `)
+
+      escrita =
+        faltando.length === 0
+          ? { ok: true }
+          : {
+              ok: false,
+              reason: 'sem_privilegio',
+              hint: 'Rode no SQL Editor: grant select, insert, update, delete on all tables in schema public to mandafy_app;',
+              detail: faltando.map((f) => `${f.tabela}:${f.privilegio}`).join(', '),
+            }
+    } catch (error) {
+      escrita = falha(error)
+    }
+  }
+
   let redis: Check = { ok: false }
   try {
     await getRedis().ping()
@@ -73,13 +111,13 @@ export async function GET() {
 
   // Redis fora do ar não impede login (o limite de tentativas degrada
   // graciosamente), então ele não derruba o status geral.
-  const ok = database.ok && schema.ok
+  const ok = database.ok && schema.ok && escrita.ok
 
   return NextResponse.json(
     {
       ok,
       service: 'mandafy',
-      checks: { database, schema, redis },
+      checks: { database, schema, escrita, redis },
       uptimeSeconds: Math.floor((Date.now() - started) / 1000),
     },
     { status: ok ? 200 : 503 },
