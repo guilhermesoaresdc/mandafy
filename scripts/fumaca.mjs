@@ -121,11 +121,37 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/configuracoes/plataformas', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/configuracoes/plataformas', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
     checar(`GET ${rota}`, r.status === 200 && !erro, `status ${r.status}${erro ? ' + exceção no HTML' : ''}`)
+  }
+
+  // O SSE do histórico: precisa abrir e mandar o primeiro evento.
+  {
+    const controle = new AbortController()
+    const r = await fetch(`${BASE}/api/historico/stream`, {
+      headers: { cookie },
+      signal: controle.signal,
+    })
+    const tipo = r.headers.get('content-type') ?? ''
+    let primeiro = ''
+    if (r.body) {
+      const leitor = r.body.getReader()
+      const { value } = await leitor.read()
+      primeiro = new TextDecoder().decode(value ?? new Uint8Array())
+      void leitor.cancel()
+    }
+    controle.abort()
+    checar('SSE /api/historico/stream', r.status === 200 && tipo.includes('text/event-stream') && primeiro.includes('pronto'), `status ${r.status}`)
+  }
+
+  // Exportação CSV do histórico.
+  {
+    const r = await get('/api/historico/csv')
+    const corpo = await r.text()
+    checar('CSV do histórico', r.status === 200 && corpo.includes('quando,canal,status'), `status ${r.status}`)
   }
 
   // Cria uma mensagem direto no banco e abre o editor.
