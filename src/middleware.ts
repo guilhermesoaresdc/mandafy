@@ -15,31 +15,24 @@ const SESSION_COOKIE = 'mandafy_session'
 const LOGIN_PATH = '/entrar'
 
 export function middleware(request: NextRequest) {
-  const { pathname, search, searchParams } = request.nextUrl
-  const hasCookie = request.cookies.has(SESSION_COOKIE)
-  const isLoginPage = pathname === LOGIN_PATH
+  const { pathname, search } = request.nextUrl
 
-  if (isLoginPage) {
-    /*
-     * O servidor validou a sessão, ela não valeu, e nos mandou para cá.
-     * Devolver para /painel só porque o cookie existe criaria um laço
-     * infinito de redirecionamento — foi o que aconteceu quando uma política
-     * de RLS impediu a leitura da organização. Aqui o cookie morto é
-     * descartado e a tela de entrada abre.
-     */
-    if (searchParams.get('sessao') === 'expirada') {
-      const response = NextResponse.next()
-      response.cookies.delete(SESSION_COOKIE)
-      return response
-    }
+  /*
+   * A tela de entrada NUNCA é redirecionada daqui.
+   *
+   * Antes, um cookie presente mandava /entrar para /painel. Como o middleware
+   * não valida a sessão, um cookie que existe mas não vale produzia um laço
+   * infinito: /painel não autenticava e mandava para /entrar, que voltava para
+   * /painel. Foi o que aconteceu quando uma política de RLS impediu a leitura
+   * da organização.
+   *
+   * Levar quem já está autenticado direto ao painel é uma gentileza, e ela
+   * agora acontece na própria página /entrar, que pode validar a sessão de
+   * verdade. Aqui, o silêncio é o que garante que nenhum laço seja possível.
+   */
+  if (pathname === LOGIN_PATH) return NextResponse.next()
 
-    if (hasCookie) {
-      return NextResponse.redirect(new URL('/painel', request.url))
-    }
-    return NextResponse.next()
-  }
-
-  if (!hasCookie) {
+  if (!request.cookies.has(SESSION_COOKIE)) {
     const url = new URL(LOGIN_PATH, request.url)
     // Preserva o destino para voltar depois do login.
     if (pathname !== '/') url.searchParams.set('next', `${pathname}${search}`)

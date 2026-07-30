@@ -2,9 +2,12 @@ import 'server-only'
 import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import type { TenantContext } from '@/db'
+import { createLogger } from '@/lib/logger'
 import { readSessionToken } from './cookies'
 
 import { validateSessionToken, type AuthUser } from './session'
+
+const log = createLogger('auth')
 
 /**
  * Usuário da requisição atual.
@@ -17,25 +20,30 @@ export const getCurrentUser = cache(async (): Promise<AuthUser | null> => {
   const token = await readSessionToken()
   if (!token) return null
 
-  const { user } = await validateSessionToken(token)
-  return user
+  try {
+    const { user } = await validateSessionToken(token)
+    return user
+  } catch (error) {
+    /*
+     * Banco fora do ar ou ambiente incompleto significa "não autenticado",
+     * nunca uma página de erro.
+     *
+     * Isto importa porque a tela de entrada também chama esta função: se ela
+     * propagasse a exceção, um banco indisponível derrubaria justamente a
+     * página onde o problema deveria ser explicado ao operador.
+     */
+    log.warn('não foi possível validar a sessão', {
+      reason: error instanceof Error ? error.name : 'desconhecido',
+    })
+    return null
+  }
 })
 
-/**
- * Exige sessão válida. Redireciona para a tela de entrada se não houver.
- *
- * O marcador `?sessao=expirada` existe para quebrar um laço: o middleware só
- * enxerga a presença do cookie, então um cookie que existe mas não valida
- * mandaria /entrar de volta para /painel indefinidamente. Com o marcador, o
- * middleware apaga o cookie e deixa a página abrir.
- */
+/** Exige sessão válida. Redireciona para a tela de entrada se não houver. */
 export async function requireUser(): Promise<AuthUser> {
   const user = await getCurrentUser()
-  if (user) return user
-
-  // Havia cookie e mesmo assim não validou: é sessão morta, não ausência dela.
-  const tinhaCookie = (await readSessionToken()) !== null
-  redirect(tinhaCookie ? '/entrar?sessao=expirada' : '/entrar')
+  if (!user) redirect('/entrar')
+  return user
 }
 
 /**
