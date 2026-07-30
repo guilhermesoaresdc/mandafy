@@ -56,24 +56,37 @@ export default async function ConfiguracoesPage() {
         </Card>
       </div>
 
-      <div className="mt-4 max-w-3xl">
-        <Card>
-          <CardBody className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-ink">Plataformas</p>
-              <p className="mt-0.5 text-2xs text-ink-2">
-                De onde os eventos chegam. Conecte sua plataforma de sorteio e combine os campos.
-              </p>
-            </div>
-            <Button asChild variant="secondary" size="sm">
-              <Link href="/configuracoes/plataformas">Abrir</Link>
-            </Button>
-          </CardBody>
-        </Card>
+      <div className="mt-4 flex max-w-3xl flex-col gap-2">
+        {[
+          {
+            titulo: 'Plataformas',
+            texto: 'De onde os eventos chegam. Conecte sua plataforma de sorteio e combine os campos.',
+            href: '/configuracoes/plataformas',
+          },
+          {
+            titulo: 'API',
+            texto: 'Chaves para o seu sistema falar com o Mandafy, e webhooks para ele avisar o seu.',
+            href: '/configuracoes/api',
+          },
+          {
+            titulo: 'Privacidade',
+            texto: 'Direitos do titular, retenção e o registro de quem acessou o quê.',
+            href: '/configuracoes/privacidade',
+          },
+        ].map((item) => (
+          <Card key={item.href}>
+            <CardBody className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-ink">{item.titulo}</p>
+                <p className="mt-0.5 text-2xs text-ink-2">{item.texto}</p>
+              </div>
+              <Button asChild variant="secondary" size="sm">
+                <Link href={item.href}>Abrir</Link>
+              </Button>
+            </CardBody>
+          </Card>
+        ))}
       </div>
-
-      {/* TODO Fase 8: chaves de API, webhooks de saída, exportação e
-          anonimização de dados (LGPD). */}
     </SessionFrame>
   )
 }

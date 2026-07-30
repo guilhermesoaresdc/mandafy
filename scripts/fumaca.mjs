@@ -121,7 +121,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -145,6 +145,65 @@ try {
     }
     controle.abort()
     checar('SSE /api/historico/stream', r.status === 200 && tipo.includes('text/event-stream') && primeiro.includes('pronto'), `status ${r.status}`)
+  }
+
+  /*
+   * A API pública de ponta a ponta: cria uma chave, autentica com ela e confere
+   * que a rota responde. É o único jeito de pegar o RLS bloqueando a busca da
+   * chave — que foi exatamente o bug encontrado nesta fase.
+   */
+  {
+    const { createHash, randomBytes } = await import('node:crypto')
+    const chaveApi = `mandafy_live_${randomBytes(24).toString('base64url')}`
+    const hash = createHash('sha256').update(chaveApi).digest('hex')
+
+    await db`INSERT INTO api_keys (org_id, name, key_hash, key_prefix, scopes)
+      VALUES (${usuario.org_id}, 'Fumaça', ${hash}, 'mandafy_live_fuma…',
+              ARRAY['messages:read','contacts:read'])`
+
+    try {
+      const r = await fetch(`${BASE}/api/v1/health`, {
+        headers: { authorization: `Bearer ${chaveApi}` },
+        redirect: 'manual',
+      })
+      const corpo = await r.text()
+      checar('API v1 autentica com a chave', r.status === 200 && corpo.includes('queue'), `status ${r.status}`)
+
+      const semChave = await fetch(`${BASE}/api/v1/health`, { redirect: 'manual' })
+      checar('API v1 recusa sem chave', semChave.status === 401, `status ${semChave.status}`)
+
+      const semEscopo = await fetch(`${BASE}/api/v1/leads`, {
+        headers: { authorization: `Bearer ${chaveApi}` },
+        redirect: 'manual',
+      })
+
+      /*
+       * O link de descadastro precisa funcionar SEM login — é o do rodapé de
+       * todo e-mail, aberto do celular de quem nunca entrou no painel.
+       *
+       * O contato é criado aqui, não procurado: uma verificação que se pula
+       * sozinha quando o banco está vazio é uma verificação que não existe.
+       */
+      const [alguem] = await db`
+        INSERT INTO contacts (org_id, name, external_id)
+        VALUES (${usuario.org_id}, 'Fumaça', 'fumaca-descadastro')
+        ON CONFLICT (org_id, external_id) WHERE external_id IS NOT NULL
+        DO UPDATE SET opted_out_at = NULL
+        RETURNING id`
+
+      try {
+        const sair = await fetch(`${BASE}/sair/${alguem.id}`, { redirect: 'manual' })
+        checar('descadastro em um clique, sem sessão', sair.status === 200, `status ${sair.status}`)
+
+        const [depois] = await db`SELECT opted_out_at FROM contacts WHERE id = ${alguem.id}`
+        checar('e o descadastro é gravado na hora', depois.opted_out_at !== null)
+      } finally {
+        await db`DELETE FROM contacts WHERE id = ${alguem.id}`
+      }
+      checar('API v1 recusa escopo que a chave não tem', semEscopo.status === 403, `status ${semEscopo.status}`)
+    } finally {
+      await db`DELETE FROM api_keys WHERE key_hash = ${hash}`
+    }
   }
 
   // Exportação CSV dos leads.

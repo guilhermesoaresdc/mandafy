@@ -21,6 +21,10 @@ const MATRIZ_SPEC = [
   { permissao: 'integracoes.gerenciar', admin: true, consultor: false },
   { permissao: 'usuarios.gerenciar', admin: true, consultor: false },
   { permissao: 'faturamento.ver', admin: true, consultor: false },
+  // Direitos do titular (§14.1): exportar e anonimizar dado pessoal é do
+  // administrador. Consultor conversa com o lead; não manipula o registro.
+  { permissao: 'contatos.exportar', admin: true, consultor: false },
+  { permissao: 'contatos.anonimizar', admin: true, consultor: false },
 ] as const
 
 describe('can — matriz de controle de acesso (§9.4)', () => {
