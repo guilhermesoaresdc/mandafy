@@ -21,6 +21,9 @@ export const PERMISSIONS = [
   'integracoes.gerenciar',
   'usuarios.gerenciar',
   'faturamento.ver',
+  /* Direitos do titular (§14.1): exportar e anonimizar dado pessoal. */
+  'contatos.exportar',
+  'contatos.anonimizar',
 ] as const
 
 export type Permission = (typeof PERMISSIONS)[number]

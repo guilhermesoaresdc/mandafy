@@ -3,7 +3,7 @@
 Motor de notificações multicanal (WhatsApp, e-mail, SMS, Telegram) + CRM leve para
 plataformas de sorteio. A especificação completa e normativa está em
 [`docs/especificacao.md`](docs/especificacao.md) — leia antes de mexer em qualquer
-subsistema. As referências `§N` neste arquivo e nos comentários do código apontam
+subsistema. A API pública está documentada em [`docs/api.md`](docs/api.md). As referências `§N` neste arquivo e nos comentários do código apontam
 para seções daquele documento.
 
 > Nota de nomenclatura: a especificação foi escrita com o nome de produto "Pulso".
@@ -87,4 +87,4 @@ Uma fase por vez, cada uma funcionando de ponta a ponta.
 - [x] **5 — Fluxos**: cadências, agendamento em cascata, cancelamento por chave
 - [x] **6 — Histórico e painel**: SSE ao vivo, partições, dashboard, barra de pulso
 - [x] **7 — CRM**: leads virtualizados, kanban, distribuição, RLS por consultor
-- [ ] **8 — API e polimento**: API pública, chaves, webhooks de saída, LGPD
+- [x] **8 — API e polimento**: API pública, chaves, webhooks de saída, LGPD

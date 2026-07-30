@@ -45,14 +45,26 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Tudo, exceto:
-     *   _next/**      → assets do build
-     *   in/**         → webhooks das plataformas: sem sessão, autenticados por
-     *                   token na URL (§4.3). Um redirect aqui quebraria a
-     *                   integração e estouraria o ACK de 50ms.
-     *   api/health    → healthcheck do Docker
+     * O middleware protege PÁGINAS. Tudo, exceto:
+     *
+     *   _next/**   assets do build
+     *
+     *   in/**      webhooks das plataformas: sem sessão, autenticados por token
+     *              na URL (§4.3). Um redirect aqui quebraria a integração e
+     *              estouraria o ACK de 50ms.
+     *
+     *   api/**     TODA rota de API se autentica sozinha — por chave em
+     *              `Authorization: Bearer` (§12.1) ou pelo cookie, lido
+     *              diretamente. Deixar o middleware na frente redirecionava a
+     *              API pública inteira para a tela de login, e nenhuma chave
+     *              válida conseguia passar.
+     *
+     *   sair/**    descadastro em um clique (§14.1). Precisa funcionar sem
+     *              login, do celular de quem abriu o e-mail — e o
+     *              `List-Unsubscribe-Post` do Gmail nem cookie manda.
+     *
      *   arquivos com extensão (favicon, imagens, fontes)
      */
-    '/((?!_next/static|_next/image|in/|api/health|.*\\.[\\w]+$).*)',
+    '/((?!_next/static|_next/image|in/|api/|sair/|.*\\.[\\w]+$).*)',
   ],
 }
