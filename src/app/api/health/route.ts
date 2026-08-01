@@ -157,6 +157,40 @@ export async function GET() {
     }
   }
 
+  /*
+   * A estrutura do banco está em dia?
+   *
+   * Este é o único check que se abre SEM sessão e diz o que quebrou uma tela
+   * autenticada — e foi a falta dele que custou caro: uma migration que não
+   * aplicou vira `column "x" does not exist`, o Next responde
+   * "Application error" com um digest opaco, e quem opera não tem por onde
+   * começar. O painel que diagnosticaria isso é justamente o que não abre.
+   *
+   * Os nomes das migrations pendentes saem na resposta. Não são segredo:
+   * estão no repositório, e sem eles a informação não serve para agir.
+   */
+  let estrutura: Check = { ok: false, reason: 'nao_verificado' }
+  if (database.ok) {
+    try {
+      const { migrationsPendentes } = await import('@/db/migrate')
+      const m = await migrationsPendentes()
+
+      estrutura =
+        m.pendentes.length === 0
+          ? { ok: true, detail: `${m.aplicadas}/${m.total} aplicadas` }
+          : {
+              ok: false,
+              reason: 'migrations_pendentes',
+              hint:
+                'O app aplica as pendentes ao subir. Se elas persistem, force um novo deploy ' +
+                'ou abra Configurações → Sistema e use "Aplicar agora".',
+              detail: m.pendentes.join(', '),
+            }
+    } catch (error) {
+      estrutura = falha(error)
+    }
+  }
+
   let redis: Check = { ok: false }
   try {
     await getRedis().ping()
@@ -167,13 +201,13 @@ export async function GET() {
 
   // Redis fora do ar não impede login (o limite de tentativas degrada
   // graciosamente), então ele não derruba o status geral.
-  const ok = database.ok && schema.ok && escrita.ok && autenticacao.ok
+  const ok = database.ok && schema.ok && escrita.ok && autenticacao.ok && estrutura.ok
 
   return NextResponse.json(
     {
       ok,
       service: 'mandafy',
-      checks: { database, schema, escrita, autenticacao, redis },
+      checks: { database, schema, estrutura, escrita, autenticacao, redis },
       uptimeSeconds: Math.floor((Date.now() - started) / 1000),
     },
     { status: ok ? 200 : 503 },

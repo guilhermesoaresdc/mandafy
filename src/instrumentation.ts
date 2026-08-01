@@ -10,9 +10,14 @@
  * para deixar o bloco fora do bundle do Edge. Uma saída antecipada
  * (`if (… !== 'nodejs') return`) NÃO serve: o import continua alcançável para a
  * análise estática. Já quebrou assim.
+ *
+ * O `await` também não é decorativo. O Next só atende a primeira requisição
+ * depois que esta função resolve — é isso que impede uma página de ser servida
+ * contra um esquema que ainda não migrou.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    await import('./instrumentation-node')
+    const { migrarNaSubida } = await import('./instrumentation-node')
+    await migrarNaSubida()
   }
 }
