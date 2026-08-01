@@ -15,14 +15,14 @@ import { salvarCanalAction, type CanalState } from './actions'
  */
 
 const ROTULO_CHAVE: Record<Channel, string> = {
-  whatsapp: 'Chave global da Evolution (opcional)',
+  whatsapp: 'Chave global da Evolution',
   email: 'Chave do provedor de e-mail',
   sms: 'Chave do provedor de SMS',
   telegram: 'Token do bot',
 }
 
 const DICA_CHAVE: Record<Channel, string> = {
-  whatsapp: 'Cada número tem a própria apikey; esta é só a de reserva.',
+  whatsapp: 'É a AUTHENTICATION_API_KEY do servidor. Com ela o QR aparece aqui dentro.',
   email: 'No Resend: Settings → API Keys.',
   sms: 'No painel do provedor, em integrações.',
   telegram: 'O @BotFather entrega quando você cria o bot.',
@@ -43,6 +43,7 @@ export function ConfigurarCanal({
   const [estado, salvar, salvando] = useActionState<CanalState, FormData>(salvarCanalAction, {})
   const chaveId = useId()
   const remetenteId = useId()
+  const urlId = useId()
 
   const provedores = CANAL_PROVEDORES[canal]
 
@@ -82,6 +83,24 @@ export function ConfigurarCanal({
       ) : (
         <input type="hidden" name="provider" value={provedores[0] ?? canal} />
       )}
+
+      {canal === 'whatsapp' ? (
+        <Field
+          label="Endereço da Evolution"
+          htmlFor={urlId}
+          hint="Fixe a imagem em v2.x.x — nunca latest."
+        >
+          <Input
+            id={urlId}
+            name="url"
+            type="url"
+            maxLength={300}
+            placeholder="https://evolution.seudominio.com.br"
+            className="font-mono"
+            aria-describedby={fieldDescriptionId(urlId)}
+          />
+        </Field>
+      ) : null}
 
       <Field
         label={ROTULO_CHAVE[canal]}

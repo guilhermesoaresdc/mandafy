@@ -206,6 +206,176 @@ try {
     }
   }
 
+  /*
+   * Ingestão das plataformas, de ponta a ponta.
+   *
+   * Existe por um bug que passou por tudo: a busca do token roda SEM contexto
+   * de tenant (a plataforma que chama não tem sessão), e com RLS ligado o
+   * SELECT devolvia zero linhas. A rota respondia 401 para toda integração
+   * legítima, e o painel continuava mostrando o conector como configurado.
+   * Nenhum teste unitário pega isso — só bater na rota com o banco de verdade.
+   */
+  {
+    const tokenIngestao = randomBytes(24).toString('base64url')
+    const [fonte] = await db`
+      INSERT INTO sources (org_id, name, ingest_token)
+      VALUES (${usuario.org_id}, 'Fumaça', ${tokenIngestao})
+      RETURNING id`
+
+    try {
+      const r = await fetch(`${BASE}/in/${tokenIngestao}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ evento: 'fumaca', pedido: randomBytes(8).toString('hex') }),
+      })
+      const corpo = await r.text()
+      checar('ingestão aceita o token da plataforma', r.status === 200, `status ${r.status} ${corpo.slice(0, 120)}`)
+
+      const [gravado] = await db`
+        SELECT count(*)::int AS n FROM events_raw WHERE source_id = ${fonte.id}`
+      checar('e o payload cru foi gravado', gravado.n === 1, `${gravado.n} linha(s)`)
+
+      const recusado = await fetch(`${BASE}/in/tokeninexistente1234567`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      checar('ingestão recusa token desconhecido', recusado.status === 401, `status ${recusado.status}`)
+    } finally {
+      await db`DELETE FROM events_raw WHERE source_id = ${fonte.id}`
+      await db`DELETE FROM sources WHERE id = ${fonte.id}`
+    }
+  }
+
+  /*
+   * Retorno da Evolution: é o que tira o histórico de "enviado" e leva a
+   * "entregue" e "lido". Mesma armadilha de RLS da ingestão, e o mesmo jeito
+   * de pegar — POST na rota com o banco de verdade e conferir a linha depois.
+   */
+  {
+    const tokenWebhook = randomBytes(24).toString('base64url')
+    const idProvedor = `FUMACA${randomBytes(6).toString('hex').toUpperCase()}`
+
+    const [instancia] = await db`
+      INSERT INTO wa_instances (org_id, name, evolution_url, instance_name, managed, webhook_token)
+      VALUES (${usuario.org_id}, 'Fumaça', 'http://127.0.0.1:1', ${'fumaca-' + randomBytes(3).toString('hex')}, true, ${tokenWebhook})
+      RETURNING id`
+
+    const [envio] = await db`
+      INSERT INTO notifications (org_id, channel, status, provider, provider_message_id, sent_at)
+      VALUES (${usuario.org_id}, 'whatsapp', 'sent', 'evolution', ${idProvedor}, now())
+      RETURNING id, created_at`
+
+    const mandar = (event, data) =>
+      fetch(`${BASE}/api/evolution/${tokenWebhook}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event, instance: 'fumaca', data }),
+      })
+
+    try {
+      const entrega = await mandar('messages.update', {
+        keyId: idProvedor,
+        remoteJid: '5511988887777@s.whatsapp.net',
+        fromMe: true,
+        status: 'DELIVERY_ACK',
+      })
+      checar('webhook da Evolution aceita o token', entrega.status === 200, `status ${entrega.status}`)
+
+      const [entregue] = await db`
+        SELECT status, delivered_at FROM notifications WHERE id = ${envio.id} AND created_at = ${envio.created_at}`
+      checar(
+        'e a mensagem vira "entregue" no histórico',
+        entregue?.status === 'delivered' && entregue.delivered_at !== null,
+        `status ${entregue?.status}`,
+      )
+
+      await mandar('messages.update', { keyId: idProvedor, status: 'READ' })
+      const [lida] = await db`
+        SELECT status, read_at FROM notifications WHERE id = ${envio.id} AND created_at = ${envio.created_at}`
+      checar('e depois "lido"', lida?.status === 'read' && lida.read_at !== null, `status ${lida?.status}`)
+
+      // Não pode regredir: o WhatsApp não garante a ordem de chegada dos acks.
+      await mandar('messages.update', { keyId: idProvedor, status: 'DELIVERY_ACK' })
+      const [aindaLida] = await db`
+        SELECT status FROM notifications WHERE id = ${envio.id} AND created_at = ${envio.created_at}`
+      checar('ack atrasado não rebaixa "lido" para "entregue"', aindaLida?.status === 'read', `status ${aindaLida?.status}`)
+
+      // Conexão: a tela do QR e o painel de saúde dependem disto.
+      await mandar('connection.update', { state: 'open', wuid: '5511988887777@s.whatsapp.net' })
+      const [conectada] = await db`SELECT status, phone_e164 FROM wa_instances WHERE id = ${instancia.id}`
+      checar(
+        'connection.update marca a instância como conectada',
+        conectada?.status === 'conectado' && conectada.phone_e164 === '+5511988887777',
+        `status ${conectada?.status}`,
+      )
+
+      /*
+       * "SAIR" no WhatsApp precisa descadastrar de verdade. Este é o caminho
+       * de maior risco do sistema inteiro: falhar aqui significa continuar
+       * mandando mensagem para quem pediu para parar (§14.1).
+       */
+      const telefone = `+5511${String(Math.floor(Math.random() * 900000000) + 100000000)}`
+      const [quemPediu] = await db`
+        INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
+        VALUES (${usuario.org_id}, 'Fumaça', ${telefone}, true)
+        RETURNING id`
+
+      try {
+        await mandar('messages.upsert', {
+          key: { id: 'IN1', remoteJid: `${telefone.replace('+', '')}@s.whatsapp.net`, fromMe: false },
+          pushName: 'Fumaça',
+          message: { conversation: 'SAIR' },
+          messageType: 'conversation',
+        })
+
+        const [saiu] = await db`
+          SELECT optin_whatsapp FROM contacts WHERE id = ${quemPediu.id}`
+        checar('"SAIR" no WhatsApp descadastra na hora', saiu?.optin_whatsapp === false)
+
+        const [supressao] = await db`
+          SELECT count(*)::int AS n FROM suppressions
+          WHERE contact_id = ${quemPediu.id} AND channel = 'whatsapp'`
+        checar('e entra na lista de supressão', supressao.n === 1, `${supressao.n} linha(s)`)
+
+        // Eco da NOSSA mensagem não pode descadastrar ninguém.
+        const [outro] = await db`
+          INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
+          VALUES (${usuario.org_id}, 'Fumaça eco', ${telefone.replace(/\d$/, '0')}, true)
+          RETURNING id`
+        try {
+          await mandar('messages.upsert', {
+            key: {
+              id: 'OUT1',
+              remoteJid: `${telefone.replace('+', '').replace(/\d$/, '0')}@s.whatsapp.net`,
+              fromMe: true,
+            },
+            message: { conversation: 'Para cancelar, responda SAIR.' },
+          })
+          const [intacto] = await db`SELECT optin_whatsapp FROM contacts WHERE id = ${outro.id}`
+          checar('o eco da nossa mensagem NÃO descadastra', intacto?.optin_whatsapp === true)
+        } finally {
+          await db`DELETE FROM suppressions WHERE contact_id = ${outro.id}`
+          await db`DELETE FROM contacts WHERE id = ${outro.id}`
+        }
+      } finally {
+        await db`DELETE FROM suppressions WHERE contact_id = ${quemPediu.id}`
+        await db`DELETE FROM audit_log WHERE entity_id = ${quemPediu.id}`
+        await db`DELETE FROM contacts WHERE id = ${quemPediu.id}`
+      }
+
+      const semToken = await fetch(`${BASE}/api/evolution/tokeninexistente1234567`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'connection.update', data: { state: 'open' } }),
+      })
+      checar('webhook recusa token desconhecido', semToken.status === 401, `status ${semToken.status}`)
+    } finally {
+      await db`DELETE FROM notifications WHERE id = ${envio.id} AND created_at = ${envio.created_at}`
+      await db`DELETE FROM wa_instances WHERE id = ${instancia.id}`
+    }
+  }
+
   // Exportação CSV dos leads.
   {
     const r = await get('/api/leads/csv')

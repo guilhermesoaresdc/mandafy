@@ -59,6 +59,8 @@ export type SaudeInstancia = {
   ultimaConexao: Date | null
   ativa: boolean
   peso: number
+  /** O Mandafy criou esta instância? Define se remover apaga do servidor. */
+  gerenciada: boolean
   semaforo: { cor: Semaforo; texto: string }
 }
 
@@ -97,6 +99,7 @@ export async function saudeDasInstancias(tx: Tx): Promise<SaudeInstancia[]> {
       ultimaConexao: linha.lastConnectedAt,
       ativa: linha.active,
       peso: linha.weight,
+      gerenciada: linha.managed,
       semaforo: semaforo(paraSemaforo),
     }
   })

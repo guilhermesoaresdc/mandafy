@@ -26,6 +26,7 @@ const instancia = (mudancas: Partial<SaudeInstancia> = {}): SaudeInstancia => ({
   ultimaConexao: null,
   ativa: true,
   peso: 1,
+  gerenciada: true,
   semaforo: { cor: 'verde', texto: 'saudável' },
   ...mudancas,
 })

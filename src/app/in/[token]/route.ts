@@ -1,7 +1,6 @@
-import { and, eq, gt, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { NextResponse, type NextRequest } from 'next/server'
 import { db } from '@/db'
-import { eventsRaw, sources } from '@/db/schema'
 import { dedupeHash, verifySignature } from '@/lib/ingest/signature'
 import { createLogger } from '@/lib/logger'
 import { getQueue, QUEUE_NAMES } from '@/lib/queue'
@@ -47,16 +46,26 @@ export async function POST(request: NextRequest, context: { params: Promise<{ to
   }
 
   try {
-    const [source] = await db
-      .select({
-        id: sources.id,
-        orgId: sources.orgId,
-        hmacSecret: sources.hmacSecret,
-        active: sources.active,
-      })
-      .from(sources)
-      .where(eq(sources.ingestToken, token))
-      .limit(1)
+    /*
+     * A busca passa por função SECURITY DEFINER (drizzle/0016).
+     *
+     * A plataforma que chama não tem sessão nem contexto de tenant, e a
+     * política de RLS de `sources` compara `org_id` com um valor nulo — o
+     * SELECT direto devolvia ZERO linhas e esta rota respondia 401 para toda
+     * integração legítima. O sintoma enganava: o painel mostrava o conector
+     * configurado, e nada jamais chegava.
+     */
+    const encontradas = await db.execute<{
+      id: string
+      org_id: string
+      hmac_secret: string | null
+      active: boolean
+    }>(sql`SELECT id, org_id, hmac_secret, active FROM mandafy_source_por_token(${token})`)
+
+    const bruta = encontradas[0]
+    const source = bruta
+      ? { id: bruta.id, orgId: bruta.org_id, hmacSecret: bruta.hmac_secret, active: bruta.active }
+      : null
 
     // Mesma resposta para token inexistente e conector desligado: quem
     // sonda não descobre se o token existe.
@@ -81,42 +90,41 @@ export async function POST(request: NextRequest, context: { params: Promise<{ to
     const hash = dedupeHash(source.id, rawBody)
 
     /*
-     * Deduplicação: plataformas fazem retry com frequência (§4.3). Se o mesmo
-     * corpo já chegou nas últimas 24h, responde 200 e ignora — repetir seria
-     * mandar a mesma mensagem duas vezes para o mesmo cliente.
+     * Deduplicação e gravação numa chamada só (drizzle/0016).
+     *
+     * Plataformas fazem retry com frequência (§4.3): se o mesmo corpo já
+     * chegou nas últimas 24h, responde 200 e ignora — repetir seria mandar a
+     * mesma mensagem duas vezes para o mesmo cliente.
+     *
+     * Junto e não em dois passos porque o retry costuma vir em rajada: com
+     * SELECT e INSERT separados, duas chamadas simultâneas passavam as duas
+     * pela checagem. Além disso `events_raw` herda a visibilidade de `sources`
+     * no RLS, e este caminho não tem contexto de tenant — a função é a porta.
      */
-    const [duplicado] = await db
-      .select({ id: eventsRaw.id })
-      .from(eventsRaw)
-      .where(
-        and(
-          eq(eventsRaw.dedupeHash, hash),
-          gt(eventsRaw.receivedAt, sql`now() - interval '24 hours'`),
-        ),
-      )
-      .limit(1)
+    const gravadas = await db.execute<{
+      id: string
+      received_at: string
+      duplicado: boolean
+    }>(sql`
+      SELECT id, received_at, duplicado FROM mandafy_gravar_evento_cru(
+        ${token},
+        ${JSON.stringify(payload)}::jsonb,
+        ${JSON.stringify(cabecalhosSeguros(request))}::jsonb,
+        ${hash},
+        ${assinatura.present ? assinatura.valid : null}
+      )`)
 
-    if (duplicado) {
+    const linha = gravadas[0]
+    if (!linha) throw new Error('não foi possível gravar o evento')
+
+    if (linha.duplicado) {
       return NextResponse.json(
         { ok: true, duplicado: true, ms: Date.now() - inicio },
         { status: 200 },
       )
     }
 
-    const [gravado] = await db
-      .insert(eventsRaw)
-      .values({
-        sourceId: source.id,
-        payload,
-        // Cabeçalhos úteis para depurar a integração, sem os que carregam
-        // credencial: authorization e cookie ficam de fora (§14.1).
-        headers: cabecalhosSeguros(request),
-        dedupeHash: hash,
-        signatureOk: assinatura.present ? assinatura.valid : null,
-      })
-      .returning({ id: eventsRaw.id, receivedAt: eventsRaw.receivedAt })
-
-    if (!gravado) throw new Error('não foi possível gravar o evento')
+    const gravado = { id: Number(linha.id), receivedAt: new Date(linha.received_at) }
 
     /*
      * O enfileiramento não pode derrubar o ACK. Redis fora do ar significa

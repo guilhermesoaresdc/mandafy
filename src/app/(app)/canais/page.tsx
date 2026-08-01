@@ -5,8 +5,15 @@ import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, ChannelIcon, Separator } from '@/components/ui'
 import { CHANNEL_COLOR_VAR, CHANNEL_LABELS, type Channel } from '@/db/schema/enums'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
+import { resolverServidorEvolution } from '@/lib/delivery/config'
 import { cn } from '@/lib/utils'
-import { alternarCanalConfigAction, alternarNumeroAction } from './actions'
+import {
+  alternarCanalConfigAction,
+  alternarNumeroAction,
+  desconectarNumeroAction,
+  removerNumeroAction,
+} from './actions'
+import { AcoesNumero } from './acoes-numero'
 import { ConectarNumero } from './conectar-numero'
 import { ConfigurarCanal } from './configurar'
 
@@ -31,9 +38,12 @@ const CORES_SEMAFORO = {
 export default async function CanaisPage() {
   const user = await requireAdmin()
 
-  const { canais, instancias } = await withTenant(tenantOf(user), async (tx) => ({
+  const { canais, instancias, servidorPronto } = await withTenant(tenantOf(user), async (tx) => ({
     canais: await estadoDosCanais(tx),
     instancias: await saudeDasInstancias(tx),
+    // Sem endereço e chave global não há como criar instância pelo painel — o
+    // botão precisa dizer isso antes do clique, não depois.
+    servidorPronto: (await resolverServidorEvolution(tx, user.orgId)) !== null,
   }))
 
   return (
@@ -113,7 +123,7 @@ export default async function CanaisPage() {
                 quando um cai.
               </p>
             </div>
-            <ConectarNumero />
+            <ConectarNumero servidorPronto={servidorPronto} />
           </div>
 
           {instancias.length === 0 ? (
@@ -175,6 +185,23 @@ export default async function CanaisPage() {
                         {instancia.ativa ? 'Pausar' : 'Retomar'}
                       </Button>
                     </form>
+
+                    {instancia.status === 'conectado' ? (
+                      <form action={desconectarNumeroAction}>
+                        <input type="hidden" name="id" value={instancia.id} />
+                        <Button type="submit" variant="ghost" size="sm">
+                          Desconectar
+                        </Button>
+                      </form>
+                    ) : null}
+
+                    <AcoesNumero
+                      id={instancia.id}
+                      nome={instancia.name}
+                      gerenciada={instancia.gerenciada}
+                      conectado={instancia.status === 'conectado'}
+                      onRemover={removerNumeroAction}
+                    />
                   </CardBody>
                 </Card>
               ))}
