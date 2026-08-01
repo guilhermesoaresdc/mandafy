@@ -1,0 +1,76 @@
+# Batimento do sistema pelo GitHub Actions.
+#
+# POR QUE EXISTE
+#
+# Sem um processo de pé, alguém precisa chamar /api/cron de tempos em tempos.
+# O Vercel Cron faz isso, mas no plano Hobby ele dispara UMA VEZ POR DIA — o
+# que, para um motor de recuperação de vendas, é o mesmo que não disparar.
+#
+# O Actions é gratuito e roda a cada 5 minutos. Não é preciso e a fila do
+# GitHub atrasa em horário de pico, mas 5 minutos de atraso num lembrete de
+# PIX é aceitável; um dia não é.
+#
+# COMO LIGAR
+#
+# Em Settings → Secrets and variables → Actions, crie dois segredos:
+#   MANDAFY_URL     https://seu-app.vercel.app
+#   CRON_SECRET     o mesmo valor configurado na Vercel
+#
+# Sem eles o fluxo sai sem fazer nada, em vez de falhar todo dia e virar ruído.
+#
+# QUANDO DESLIGAR
+#
+# Se você subir o worker num servidor (Railway, Render, VPS), este fluxo vira
+# redundância inofensiva mas dispensável — os dois podem conviver, porque a
+# transição para `sending` é comparação-e-troca e só um dos dois envia. Para
+# desligar, apague este arquivo ou desabilite o workflow pela aba Actions.
+
+name: Batimento
+
+on:
+  schedule:
+    # A cada 5 minutos — o menor intervalo que o GitHub aceita.
+    - cron: '*/5 * * * *'
+  # Permite disparar à mão pela aba Actions, para testar sem esperar.
+  workflow_dispatch:
+
+# Duas execuções sobrepostas não causam envio duplo (a rota tem trava no
+# banco), mas gastam minutos à toa.
+concurrency:
+  group: batimento
+  cancel-in-progress: false
+
+jobs:
+  bater:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Chamar o batimento
+        env:
+          MANDAFY_URL: ${{ secrets.MANDAFY_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$MANDAFY_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "MANDAFY_URL ou CRON_SECRET não configurados — nada a fazer."
+            echo "Configure em Settings → Secrets and variables → Actions."
+            exit 0
+          fi
+
+          # --max-time protege contra a rota travar e segurar o runner.
+          # O corpo é ecoado porque é ele que diz quantas mensagens saíram.
+          codigo=$(curl -sS -o resposta.json -w '%{http_code}' \
+            --max-time 90 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$MANDAFY_URL/api/cron")
+
+          echo "HTTP $codigo"
+          cat resposta.json
+          echo
+
+          # 401 é erro de configuração e precisa ficar vermelho: silenciá-lo
+          # faria o sistema parecer vivo por semanas sem enviar nada.
+          if [ "$codigo" != "200" ]; then
+            echo "::error::O batimento respondeu $codigo"
+            exit 1
+          fi

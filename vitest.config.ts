@@ -5,6 +5,15 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, './src'),
+      /*
+       * `server-only` lança na importação de propósito — é assim que ele
+       * impede um módulo de servidor de acabar no bundle do navegador. Sob o
+       * Vitest não há navegador, e essa exceção derrubava suítes inteiras
+       * que só queriam testar a lógica por trás (o batimento de entrega
+       * alcança `normalize.ts`, por exemplo). A regra continua valendo onde
+       * importa: no `next build`.
+       */
+      'server-only': resolve(import.meta.dirname, './tests/stubs/server-only.ts'),
     },
   },
   test: {

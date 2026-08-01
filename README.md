@@ -107,6 +107,34 @@ evolution Evolution API v2 (WhatsApp)
 Stack: Next.js 15 App Router · TypeScript · Drizzle ORM · PostgreSQL 16 ·
 BullMQ + Redis · Tailwind v4 · Radix Primitives · Zod · Vitest.
 
+### Sem worker: o batimento
+
+Nem toda instalação tem onde deixar um processo de pé — quem publica só na
+Vercel não tem. Sem consumidor, tudo que o sistema faz termina numa linha
+`queued` que ninguém pega: o painel mostra "na fila" para sempre e nada chega
+a ninguém.
+
+Para esse caso existe **`GET /api/cron`**. Uma chamada periódica faz o que o
+worker faria: envia o que venceu, devolve à fila o que falhou e roda a
+manutenção. Autentica por `CRON_SECRET` em `Authorization: Bearer`; sem a
+variável configurada, a rota recusa tudo.
+
+| Agendador | Intervalo | Como ligar |
+|---|---|---|
+| Vercel Cron | 1 min no Pro, **1 dia no Hobby** | já vem em `vercel.json`; basta definir `CRON_SECRET` |
+| GitHub Actions | 5 min, grátis | `.github/workflows/batimento.yml`; defina os segredos `MANDAFY_URL` e `CRON_SECRET` |
+| QStash, cron-job.org, UptimeRobot | 1 min | apontar para a URL com o header |
+
+O worker continua sendo melhor onde couber: reage no instante em vez de
+esperar o próximo intervalo, e não tem teto de duração. Os dois podem conviver
+sem risco de envio duplo — quem envia de fato é `processarEnvio`, e a
+transição para `sending` é comparação-e-troca: se os dois pegarem a mesma
+linha, só um encontra a linha ainda pendente.
+
+O ritmo por número (§7.2) e o teto diário (§7.3) valem igual nos dois modos.
+No batimento o espaçamento acontece dentro da própria invocação, porque entre
+uma chamada e outra não há quem segure nada.
+
 As migrations são **SQL escrito à mão** em `drizzle/`. O gerador do drizzle-kit
 não expressa tabelas particionadas, políticas RLS, `citext` nem índices
 trigram — e o sistema depende dos quatro. O schema Drizzle em `src/db/schema/`

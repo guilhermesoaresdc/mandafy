@@ -19,13 +19,14 @@ import { waInstances } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
 import { closeQueues, getQueue, limitsFor, QUEUE_NAMES, waQueueName } from '@/lib/queue'
 import { closeRedis, getQueueConnection } from '@/lib/redis'
-import { purgeExpiredSessions } from '@/lib/auth/session'
-import { normalizeRawEvent, reprocessPending, type NormalizeOutcome } from '@/lib/ingest/normalize'
+import { normalizeRawEvent, type NormalizeOutcome } from '@/lib/ingest/normalize'
 import { marcarEsgotado, processarEnvio, type DadosJobEnvio } from '@/lib/delivery/send'
-import { reagendarEnvio, reenfileirarPendentes } from '@/lib/delivery/enqueue'
-import { avaliarEscada, limitesDoEstagio } from '@/lib/delivery/warmup'
-import { varrerLeadsAtrasados } from '@/lib/crm/criar-lead'
-import { organizations } from '@/db/schema'
+import { reagendarEnvio } from '@/lib/delivery/enqueue'
+import {
+  manutencaoHoraria,
+  zerarContadoresDiarios,
+  type ResultadoHorario,
+} from '@/lib/manutencao'
 
 const log = createLogger('worker')
 
@@ -38,8 +39,15 @@ const ZERAR_JOB = 'zerar-contadores'
 const ZERAR_CRON = '5 0 * * *'
 const DEFAULT_TZ = process.env.DEFAULT_TIMEZONE ?? 'America/Sao_Paulo'
 
-type ResultadoManutencao = { partitions: string; sessions: number; retomados: number } | { zerados: number }
+type ResultadoManutencao = ResultadoHorario | { zerados: number }
 
+/**
+ * Manutenção periódica.
+ *
+ * O corpo mora em `src/lib/manutencao.ts` e não aqui: a mesma rotina precisa
+ * rodar pelo tick por HTTP, para quem publica sem um processo de pé. Duas
+ * cópias divergiriam — e a que roda menos seria a que ninguém testa.
+ */
 async function runMaintenance(job: Job): Promise<ResultadoManutencao> {
   if (job.name === ZERAR_JOB) {
     const zerados = await zerarContadoresDiarios()
@@ -48,122 +56,9 @@ async function runMaintenance(job: Job): Promise<ResultadoManutencao> {
   }
 
   log.info('manutenção iniciada', { jobId: job.id })
-
-  const [row] = await db.execute<{ result: string }>(
-    sql`SELECT mandafy_maintain_partitions() AS result`,
-  )
-  const partitions = row?.result ?? 'sem retorno'
-
-  const sessions = await purgeExpiredSessions()
-
-  /*
-   * Retoma eventos gravados que não chegaram à fila — o endpoint de ingestão
-   * grava e enfileira em passos separados de propósito, para que um Redis fora
-   * do ar não derrube o ACK. Sem esta varredura, esses eventos ficariam
-   * parados para sempre.
-   */
-  const retomados = await reprocessPending(200)
-
-  // Envios gravados que não chegaram à fila — mesma rede de segurança, do
-  // outro lado do sistema.
-  const reenviados = await withTenant(
-    { orgId: '00000000-0000-0000-0000-000000000000', userId: '00000000-0000-0000-0000-000000000000', isAdmin: true },
-    (tx) => reenfileirarPendentes(tx),
-  ).catch(() => 0)
-
-  const escadas = await avancarAquecimento()
-
-  // Regras de criação de lead com atraso (§9.3): "gerou o PIX e não pagou em
-  // 24h". A checagem de "não pagou" acontece AGORA, não no evento — é o que
-  // separa um funil de leads reais de um cheio de gente que pagou depois.
-  const novosLeads = await varrerLeads()
-
-  log.info('manutenção concluída', {
-    partitions,
-    expiredSessions: sessions,
-    retomados,
-    reenviados,
-    escadas,
-    novosLeads,
-  })
-  return { partitions, sessions, retomados }
-}
-
-/** Varre os leads atrasados de cada organização (§9.3). */
-async function varrerLeads(): Promise<number> {
-  const orgs = await db.select({ id: organizations.id }).from(organizations)
-  let total = 0
-
-  for (const org of orgs) {
-    // Uma transação por organização: o RLS exige contexto de tenant, e um erro
-    // numa não pode impedir a varredura das outras.
-    total += await withTenant(
-      { orgId: org.id, userId: org.id, isAdmin: true },
-      (tx) => varrerLeadsAtrasados(tx, org.id),
-    ).catch(() => 0)
-  }
-
-  return total
-}
-
-/**
- * Move a escada de aquecimento (§7.3).
- *
- * Roda de hora em hora junto da manutenção. A progressão é automática, mas só
- * sobe com falha abaixo de 3% — e qualquer degradação REBAIXA. Um número que
- * sobe rápido demais é um número banido em duas semanas.
- */
-async function avancarAquecimento(): Promise<number> {
-  const agora = new Date()
-  const instancias = await db.select().from(waInstances)
-  let mexidas = 0
-
-  for (const instancia of instancias) {
-    const decisao = avaliarEscada(
-      {
-        warmupStage: instancia.warmupStage,
-        warmupStartedAt: instancia.warmupStartedAt,
-        failureRate24h: Number(instancia.failureRate24h),
-      },
-      agora,
-    )
-
-    if (decisao.acao === 'manter') continue
-
-    const limites = limitesDoEstagio(decisao.estagio)
-    await db
-      .update(waInstances)
-      .set({ warmupStage: decisao.estagio, ...limites, updatedAt: agora })
-      .where(eq(waInstances.id, instancia.id))
-
-    // Sem telefone nem nome de contato no log (§14.1) — só o id da instância.
-    log.info('estágio de aquecimento alterado', {
-      instanceId: instancia.id,
-      acao: decisao.acao,
-      de: instancia.warmupStage,
-      para: decisao.estagio,
-      motivo: decisao.motivo,
-    })
-    mexidas += 1
-  }
-
-  return mexidas
-}
-
-/**
- * Zera o contador diário de cada instância.
- *
- * Sem isto, `sentToday` cresceria para sempre e toda instância bateria o teto
- * no segundo dia — a operação inteira pararia em silêncio.
- */
-async function zerarContadoresDiarios(): Promise<number> {
-  const linhas = await db
-    .update(waInstances)
-    .set({ sentToday: 0, updatedAt: new Date() })
-    .where(sql`${waInstances.sentToday} > 0`)
-    .returning({ id: waInstances.id })
-
-  return linhas.length
+  const resultado = await manutencaoHoraria()
+  log.info('manutenção concluída', resultado)
+  return resultado
 }
 
 /**

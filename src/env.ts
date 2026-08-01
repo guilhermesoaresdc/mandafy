@@ -32,6 +32,16 @@ const serverSchema = z.object({
   DATABASE_URL_ADMIN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1),
 
+  /*
+   * Segredo do disparador periódico (§7.1).
+   *
+   * Sem worker de pé, quem move a fila é uma requisição HTTP repetida — e ela
+   * chega sem sessão. Ausente, a rota /api/cron recusa TODAS as chamadas: um
+   * endpoint que envia mensagem e dispensa credencial é um endpoint que
+   * qualquer um usa para queimar seus números.
+   */
+  CRON_SECRET: z.string().min(16).optional(),
+
   // Evolution API (WhatsApp) — §8.2
   EVOLUTION_URL: z.url().optional(),
   EVOLUTION_GLOBAL_APIKEY: z.string().optional(),
