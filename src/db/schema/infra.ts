@@ -68,6 +68,14 @@ export const waInstances = pgTable(
     failureRate24h: numeric('failure_rate_24h', { precision: 5, scale: 4 }).notNull().default('0'),
     lastConnectedAt: timestamp('last_connected_at', { withTimezone: true }),
     proxyUrl: text('proxy_url'),
+    /**
+     * `true` = o Mandafy criou esta instância na Evolution. Só essas podem ser
+     * APAGADAS do servidor — o resto foi colado de fora, e mexer derrubaria o
+     * WhatsApp de outro sistema que compartilha a mesma Evolution.
+     */
+    managed: boolean('managed').notNull().default(false),
+    /** Segredo na URL do webhook de retorno: a Evolution não assina o que envia. */
+    webhookToken: text('webhook_token'),
     /** Peso para o rodízio entre números. */
     weight: integer('weight').notNull().default(1),
     active: boolean('active').notNull().default(true),

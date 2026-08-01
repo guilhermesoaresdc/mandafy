@@ -23,7 +23,7 @@ import type { InstanciaWhatsapp } from './warmup'
 export type CredenciaisCanal = Record<string, string>
 
 /** Decifra o blob de `channel_configs`, tolerando ausência. */
-function abrirCredenciais(cifrado: Buffer | null): CredenciaisCanal {
+export function abrirCredenciais(cifrado: Buffer | null): CredenciaisCanal {
   if (!cifrado || cifrado.length === 0) return {}
 
   try {
@@ -146,6 +146,42 @@ export async function resolverCanal(
       return { provider: 'telegram', falta: null, alvo: { canal, config: { botToken } } }
     }
   }
+}
+
+/**
+ * O servidor da Evolution e a chave GLOBAL, para administrar instâncias (§7.3).
+ *
+ * Diferente de `resolverCanal`: aquela devolve a apikey DA INSTÂNCIA, que só
+ * envia mensagem. Esta devolve a chave que cria e apaga instâncias — por isso
+ * mora numa função separada, chamada só pelas ações do painel.
+ *
+ * Ordem: o que a organização salvou em `channel_configs`, depois o ambiente.
+ * O ambiente cobre a instalação única, em que a Evolution é do próprio dono.
+ */
+export async function resolverServidorEvolution(
+  tx: Tx,
+  orgId: string,
+): Promise<{ url: string; apikeyGlobal: string } | null> {
+  const env = serverEnv()
+
+  const [linha] = await tx
+    .select({ credentials: channelConfigs.credentialsEncrypted })
+    .from(channelConfigs)
+    .where(
+      and(
+        eq(channelConfigs.orgId, orgId),
+        eq(channelConfigs.channel, 'whatsapp'),
+        eq(channelConfigs.isDefault, true),
+      ),
+    )
+    .limit(1)
+
+  const cred = abrirCredenciais(linha?.credentials ?? null)
+
+  const url = cred.url || env.EVOLUTION_URL || ''
+  const apikeyGlobal = cred.apikey || env.EVOLUTION_GLOBAL_APIKEY || ''
+
+  return url && apikeyGlobal ? { url, apikeyGlobal } : null
 }
 
 export type InstanciaWhatsappComSegredo = InstanciaWhatsapp & {

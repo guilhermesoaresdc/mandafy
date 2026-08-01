@@ -146,6 +146,23 @@ A Evolution API **não é** a API oficial da Meta. Ela funciona bem e é a escol
 certa para este custo e esta velocidade, mas **o número pode ser banido — e um
 número banido raramente volta.**
 
+### Conectando um número
+
+Em **Canais**, preencha o endereço da Evolution e a chave global no cartão do
+WhatsApp; depois **Conectar por QR Code**, dê um nome ao chip e leia o código
+na própria tela. O Mandafy cria a instância, registra o retorno e detecta
+sozinho quando o aparelho conecta. Não é preciso abrir o Manager da Evolution.
+
+Se a Evolution já roda para outra operação, use **Colar credenciais**: o
+Mandafy passa a enviar pela instância que já existe e **nunca a apaga do
+servidor** — remover aqui tira só a linha daqui. A distinção fica gravada em
+`wa_instances.managed`, e é ela que decide o que o botão "Remover" faz.
+
+O retorno da Evolution chega em `/api/evolution/{token}` e é o que move o
+histórico de *enviado* para *entregue* e *lido*, e o que faz "SAIR" respondido
+no WhatsApp descadastrar na hora. A Evolution não assina o que envia — por isso
+o segredo vai na URL, um por instância.
+
 O Mandafy reduz o risco com aquecimento automático, rate limit por instância,
 spintax, janela de silêncio, respeito a opt-out e rodízio entre números. Isso
 reduz muito o risco, mas não o zera. Na prática:
