@@ -156,6 +156,19 @@ export const auditLog = pgTable(
   ],
 )
 
+/**
+ * Quando cada tarefa periódica rodou pela última vez (§7.1).
+ *
+ * O worker guardava isso na própria fila do BullMQ, que é um processo de pé. Um
+ * tick disparado por HTTP nasce sem memória: precisa perguntar ao banco se a
+ * manutenção desta hora já aconteceu. Sem org_id — são tarefas do sistema.
+ */
+export const systemState = pgTable('system_state', {
+  key: text('key').primaryKey(),
+  ranAt: timestamp('ran_at', { withTimezone: true }).notNull().defaultNow(),
+  detail: jsonb('detail').$type<Record<string, unknown>>(),
+})
+
 export type ChannelConfig = typeof channelConfigs.$inferSelect
 export type NewChannelConfig = typeof channelConfigs.$inferInsert
 export type WaInstance = typeof waInstances.$inferSelect

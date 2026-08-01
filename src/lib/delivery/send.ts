@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { withTenant } from '@/db'
 import { contacts, notifications, waInstances } from '@/db/schema'
 import { enviarPeloCanal } from '@/lib/channels'
@@ -102,17 +102,35 @@ export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvi
 
     const canal = await resolverCanal(tx, dados.orgId, linha.channel, instancia)
 
-    // Marca `sending` antes de sair para a rede: se o processo morrer no meio,
-    // o estado mostra que a tentativa começou, em vez de sugerir que a fila
-    // nunca a pegou.
-    await tx
+    /*
+     * Marca `sending` antes de sair para a rede: se o processo morrer no meio,
+     * o estado mostra que a tentativa começou, em vez de sugerir que a fila
+     * nunca a pegou.
+     *
+     * A condição de status DENTRO do UPDATE é o que impede envio duplo. O
+     * SELECT acima não tranca nada, então dois processos podem lê-la como
+     * `queued` no mesmo instante — o BullMQ garantia entrega única, mas o tick
+     * por HTTP não garante: duas invocações do cron podem se sobrepor. Aqui só
+     * um UPDATE encontra a linha ainda pendente; o outro não devolve linha
+     * nenhuma e desiste. É comparação-e-troca, e vale para os dois caminhos.
+     */
+    const [reivindicada] = await tx
       .update(notifications)
       .set({
         status: 'sending',
         attemptedAt: new Date(),
         attempts: sql`${notifications.attempts} + 1`,
       })
-      .where(and(eq(notifications.id, linha.id), eq(notifications.createdAt, criadoEm)))
+      .where(
+        and(
+          eq(notifications.id, linha.id),
+          eq(notifications.createdAt, criadoEm),
+          inArray(notifications.status, ['queued', 'scheduled']),
+        ),
+      )
+      .returning({ id: notifications.id })
+
+    if (!reivindicada) return { tipo: 'ja_processado' as const, status: 'sending' }
 
     return { tipo: 'pronto' as const, linha, contato, canal }
   })

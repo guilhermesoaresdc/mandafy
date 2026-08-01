@@ -29,6 +29,7 @@ const env = {
   // Valores descartáveis: este processo não emite sessão real nem cifra nada.
   SESSION_SECRET: 'x'.repeat(64),
   ENCRYPTION_KEY: 'a'.repeat(64),
+  CRON_SECRET: 'c'.repeat(32),
 }
 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -374,6 +375,37 @@ try {
       await db`DELETE FROM notifications WHERE id = ${envio.id} AND created_at = ${envio.created_at}`
       await db`DELETE FROM wa_instances WHERE id = ${instancia.id}`
     }
+  }
+
+  /*
+   * O batimento (§7.1).
+   *
+   * É o que substitui o worker para quem publica só na Vercel. Se ele recusar
+   * a credencial certa, ou aceitar a errada, o sistema ou não envia nada ou
+   * envia para quem pedir — os dois desfechos silenciosos.
+   */
+  {
+    const bater = (cabecalhos = {}) =>
+      fetch(`${BASE}/api/cron`, { headers: cabecalhos, redirect: 'manual' })
+
+    const semNada = await bater()
+    checar('batimento recusa sem credencial', semNada.status === 401, `status ${semNada.status}`)
+
+    const errada = await bater({ authorization: 'Bearer errado-mas-do-mesmo-tamanho--' })
+    checar('batimento recusa credencial errada', errada.status === 401, `status ${errada.status}`)
+
+    const certa = await bater({ authorization: `Bearer ${env.CRON_SECRET}` })
+    const corpo = await certa.text()
+    checar(
+      'batimento roda com a credencial certa',
+      certa.status === 200 && corpo.includes('"ok":true'),
+      `status ${certa.status} ${corpo.slice(0, 160)}`,
+    )
+
+    // Duas chamadas seguidas não podem quebrar: a segunda encontra a trava ou
+    // simplesmente não acha trabalho.
+    const denovo = await bater({ authorization: `Bearer ${env.CRON_SECRET}` })
+    checar('batimento é seguro de repetir', denovo.status === 200, `status ${denovo.status}`)
   }
 
   // Exportação CSV dos leads.
