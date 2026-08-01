@@ -221,7 +221,22 @@ export async function enfileirarEnvio(
       continue
     }
 
-    const atrasoMs = Math.max(0, decisao.quando.getTime() - agora.getTime())
+    /*
+     * O atraso do job é contado do RELÓGIO, não de `agora`.
+     *
+     * `agora` aqui é o instante LÓGICO do passo: `run.ts` chama esta função uma
+     * vez por degrau da cascata passando `marcado.quando` — para o passo de
+     * +20h, `agora` já é daqui a 20 horas. Subtrair um do outro devolvia só o
+     * jitter, e o job de +20h saía em segundos.
+     *
+     * O estrago não era um envio adiantado e sim o colapso do §5.1: a cascata
+     * inteira saía de uma vez, e quando o pagamento chegava não havia mais nada
+     * agendado para cancelar. O subsistema que o CLAUDE.md chama de mais
+     * crítico ficava inoperante — com `scheduledFor` gravado certo, o que fazia
+     * a tela e o histórico concordarem com a intenção e discordarem do que
+     * saiu.
+     */
+    const atrasoMs = Math.max(0, decisao.quando.getTime() - Date.now())
 
     try {
       const job = await getQueue(fila).add(
@@ -397,6 +412,64 @@ export function linkDescadastro(contactId: string): string {
 }
 
 /** Envios ainda não enfileirados — a rede de segurança de um Redis instável. */
+/**
+ * Devolve à fila um envio que chegou antes da hora.
+ *
+ * O `jobId` leva um sufixo porque o job original ainda está ativo neste
+ * instante — reusar `n:{id}` seria recusado pelo BullMQ como duplicata, e o
+ * envio sumiria da fila sem ninguém perceber. O sufixo é o horário alvo, então
+ * dois reagendamentos para o mesmo instante continuam colapsando em um só.
+ */
+export async function reagendarEnvio(
+  tx: Tx,
+  dados: { notificationId: string; createdAt: Date; orgId: string },
+  quando: Date,
+): Promise<boolean> {
+  const [linha] = await tx
+    .select({
+      channel: notifications.channel,
+      providerInstance: notifications.providerInstance,
+    })
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.id, dados.notificationId),
+        eq(notifications.createdAt, dados.createdAt),
+      ),
+    )
+    .limit(1)
+
+  if (!linha) return false
+
+  const fila = queueForChannel(linha.channel, linha.providerInstance)
+  if (!fila) return false
+
+  const job = await getQueue(fila).add(
+    'enviar',
+    {
+      notificationId: dados.notificationId,
+      createdAt: dados.createdAt.toISOString(),
+      orgId: dados.orgId,
+    },
+    {
+      delay: Math.max(0, quando.getTime() - Date.now()),
+      jobId: `n:${dados.notificationId}:${quando.getTime()}`,
+    },
+  )
+
+  await tx
+    .update(notifications)
+    .set({ queueJobId: String(job.id) })
+    .where(
+      and(
+        eq(notifications.id, dados.notificationId),
+        eq(notifications.createdAt, dados.createdAt),
+      ),
+    )
+
+  return true
+}
+
 export async function reenfileirarPendentes(tx: Tx, limite = 200): Promise<number> {
   const pendentes = await tx
     .select({

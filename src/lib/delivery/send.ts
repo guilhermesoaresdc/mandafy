@@ -31,7 +31,17 @@ export type DesfechoEnvio =
   | { desfecho: 'enviado'; providerMessageId: string | null }
   | { desfecho: 'cancelado' }
   | { desfecho: 'ja_processado'; status: string }
+  /** Chegou antes da hora: não sai, e quem chamou reagenda para `quando`. */
+  | { desfecho: 'cedo_demais'; quando: Date }
   | { desfecho: 'falhou'; codigo: string; reenviavel: boolean; esperarSegundos?: number }
+
+/**
+ * Folga entre o relógio do app e o do banco.
+ *
+ * Sem ela, uma diferença de milissegundos entre as duas máquinas faria um job
+ * pontual voltar para a fila em laço.
+ */
+const TOLERANCIA_MS = 5_000
 
 export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvio> {
   const criadoEm = new Date(dados.createdAt)
@@ -55,6 +65,23 @@ export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvi
     if (linha.status === 'cancelled') return { tipo: 'cancelado' as const }
     if (!['queued', 'scheduled'].includes(linha.status)) {
       return { tipo: 'ja_processado' as const, status: linha.status }
+    }
+
+    /*
+     * Nunca enviar antes da hora marcada (§5.1).
+     *
+     * Rede de segurança, não caminho normal: quem agenda é `enqueue.ts`, e ele
+     * é quem deve acertar o atraso. Mas se a fila entregar cedo — por um erro
+     * de cálculo como o que já existiu, por um job reenfileirado à mão, ou por
+     * um Redis restaurado de backup — o envio antecipado é irreversível. A
+     * mensagem chega, e o cancelamento por chave perde o objeto.
+     *
+     * A checagem vem ANTES de marcar `sending` e de incrementar `attempts`:
+     * chegar cedo não é tentativa, e contá-la esgotaria as retentativas de uma
+     * mensagem que ainda nem podia sair.
+     */
+    if (linha.scheduledFor && linha.scheduledFor.getTime() - Date.now() > TOLERANCIA_MS) {
+      return { tipo: 'cedo_demais' as const, quando: linha.scheduledFor }
     }
 
     const [contato] = await tx
@@ -91,6 +118,9 @@ export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvi
   })
 
   if (preparado.tipo === 'cancelado') return { desfecho: 'cancelado' }
+  if (preparado.tipo === 'cedo_demais') {
+    return { desfecho: 'cedo_demais', quando: preparado.quando }
+  }
   if (preparado.tipo === 'ja_processado') {
     return { desfecho: 'ja_processado', status: preparado.status }
   }

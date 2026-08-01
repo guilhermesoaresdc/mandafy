@@ -17,11 +17,15 @@
     "worker": "node --env-file-if-exists=.env --import tsx src/worker/index.ts",
     "worker:dev": "node --env-file-if-exists=.env --import tsx --watch src/worker/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate-cli.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "node --env-file-if-exists=.env --import tsx src/db/seed.ts",
-    "fumaca": "node scripts/fumaca.mjs"
+    "fumaca": "node scripts/fumaca.mjs",
+    "db:embutir": "node scripts/embutir-migrations.mjs",
+    "prebuild": "node scripts/embutir-migrations.mjs",
+    "predev": "node scripts/embutir-migrations.mjs",
+    "pretest": "node scripts/embutir-migrations.mjs"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.11",
