@@ -1,7 +1,7 @@
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { NextResponse, type NextRequest } from 'next/server'
 import { db, withTenant } from '@/db'
-import { contacts, notifications, waInstances } from '@/db/schema'
+import { contacts, waInstances } from '@/db/schema'
 import {
   lerRetorno,
   statusDoAck,
@@ -9,6 +9,7 @@ import {
   type RetornoEvolution,
 } from '@/lib/channels/evolution-webhook'
 import { notificar } from '@/lib/api/webhooks'
+import { marcarEntrega } from '@/lib/delivery/retorno'
 import { descadastrar, ehPedidoDeSaida } from '@/lib/lgpd'
 import { createLogger } from '@/lib/logger'
 import { toE164 } from '@/lib/phone'
@@ -39,9 +40,6 @@ export const runtime = 'nodejs'
 const log = createLogger('evolution')
 
 const TAMANHO_MAXIMO = 512 * 1024
-
-/** Retenção da camada quente (§10.2): fora disso o UPDATE não acha mesmo. */
-const JANELA_HORAS = 72
 
 export async function POST(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params
@@ -142,7 +140,10 @@ async function aplicar(
   if (retorno.tipo === 'status') {
     const novo = statusDoAck(retorno.ack)
     if (!novo) return
-    await marcarEntrega(tx, orgId, retorno.providerMessageId, novo, agora)
+    await marcarEntrega(tx, orgId, 'whatsapp', retorno.providerMessageId, novo, agora, {
+      codigo: 'ack_erro',
+      mensagem: 'o WhatsApp devolveu erro na entrega',
+    })
     return
   }
 
@@ -178,76 +179,4 @@ async function aplicar(
 
   // `saiu` confirma um id que o adaptador já gravou na resposta do envio. Nada
   // a fazer — fica registrado para não parecer que o evento foi esquecido.
-}
-
-/**
- * Grava entrega ou leitura na notificação certa.
- *
- * Duas coisas não óbvias:
- *
- * `created_at >= agora - 72h` existe porque `notifications` é particionada por
- * dia. Sem esse limite o UPDATE varre TODAS as partições a cada confirmação —
- * e chega uma ou mais por mensagem enviada. É o mesmo cuidado do índice em
- * drizzle/0016.
- *
- * A comparação de status impede regressão: o WhatsApp entrega DELIVERY_ACK e
- * READ, mas a ordem de chegada não é garantida. Sem o guarda, um DELIVERY_ACK
- * atrasado rebaixaria para "entregue" uma mensagem já marcada como "lida".
- */
-async function marcarEntrega(
-  tx: Transacao,
-  orgId: string,
-  providerMessageId: string,
-  novo: 'delivered' | 'read' | 'failed',
-  agora: Date,
-): Promise<void> {
-  const desde = new Date(agora.getTime() - JANELA_HORAS * 60 * 60 * 1000)
-
-  const [alvo] = await tx
-    .select({
-      id: notifications.id,
-      createdAt: notifications.createdAt,
-      status: notifications.status,
-      contactId: notifications.contactId,
-    })
-    .from(notifications)
-    .where(
-      and(
-        eq(notifications.orgId, orgId),
-        eq(notifications.providerMessageId, providerMessageId),
-        gte(notifications.createdAt, desde),
-      ),
-    )
-    .limit(1)
-
-  if (!alvo) return
-
-  const ORDEM: Record<string, number> = { sent: 1, delivered: 2, read: 3 }
-  if (novo !== 'failed' && (ORDEM[alvo.status] ?? 0) >= (ORDEM[novo] ?? 0)) return
-
-  await tx
-    .update(notifications)
-    .set({
-      status: novo,
-      ...(novo === 'delivered' ? { deliveredAt: agora } : {}),
-      // Lido implica entregue: se o DELIVERY_ACK se perdeu, o horário da
-      // leitura preenche os dois. Ficar com "lido" e entrega vazia faria o
-      // relatório de entrega mentir para menos.
-      ...(novo === 'read' ? { readAt: agora, deliveredAt: alvo.status === 'delivered' ? undefined : agora } : {}),
-      ...(novo === 'failed'
-        ? { errorCode: 'ack_erro', errorMessage: 'o WhatsApp devolveu erro na entrega' }
-        : {}),
-    })
-    .where(and(eq(notifications.id, alvo.id), eq(notifications.createdAt, alvo.createdAt)))
-
-  const evento =
-    novo === 'delivered' ? 'message.delivered' : novo === 'read' ? 'message.read' : 'message.failed'
-
-  await notificar(
-    tx,
-    orgId,
-    evento,
-    { notification_id: alvo.id, contact_id: alvo.contactId, canal: 'whatsapp' },
-    agora,
-  )
 }

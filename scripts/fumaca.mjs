@@ -408,6 +408,173 @@ try {
     checar('batimento é seguro de repetir', denovo.status === 200, `status ${denovo.status}`)
   }
 
+  /*
+   * Retorno de e-mail, SMS e Telegram (§8.3, §8.4, §8.5).
+   *
+   * A mesma armadilha de RLS da ingestão e da Evolution: a busca do canal roda
+   * sem contexto de tenant, porque o provedor chama de fora. Se a função de
+   * drizzle/0017 falhar, as três rotas respondem 401 para toda chamada
+   * legítima — e o modo de falha é silencioso, porque nada no painel muda.
+   *
+   * O que se confere aqui é o efeito no banco, não o formato do payload: esse
+   * já está coberto sem banco em src/lib/channels/retorno.test.ts.
+   */
+  {
+    const tokenEmail = randomBytes(24).toString('base64url')
+    const tokenSms = randomBytes(24).toString('base64url')
+    const tokenTelegram = randomBytes(24).toString('base64url')
+
+    const [cfgEmail] = await db`
+      INSERT INTO channel_configs (org_id, channel, provider, webhook_token)
+      VALUES (${usuario.org_id}, 'email', 'resend', ${tokenEmail})
+      RETURNING id`
+    const [cfgSms] = await db`
+      INSERT INTO channel_configs (org_id, channel, provider, webhook_token)
+      VALUES (${usuario.org_id}, 'sms', 'smsdev', ${tokenSms})
+      RETURNING id`
+    const [cfgTelegram] = await db`
+      INSERT INTO channel_configs (org_id, channel, provider, webhook_token)
+      VALUES (${usuario.org_id}, 'telegram', 'telegram', ${tokenTelegram})
+      RETURNING id`
+
+    const endereco = `fumaca-${randomBytes(5).toString('hex')}@exemplo.com`
+    const telefoneSms = `+5511${String(Math.floor(Math.random() * 900000000) + 100000000)}`
+    const externo = `fumaca_${randomBytes(5).toString('hex')}`
+    const chatId = Math.floor(Math.random() * 1000000) + 1
+
+    const [pessoa] = await db`
+      INSERT INTO contacts (org_id, name, email, phone_e164, external_id)
+      VALUES (${usuario.org_id}, 'Fumaça Retorno', ${endereco}, ${telefoneSms}, ${externo})
+      RETURNING id`
+
+    const idEmail = `re_${randomBytes(8).toString('hex')}`
+    const idSms = String(Math.floor(Math.random() * 1000000))
+
+    const [envioEmail] = await db`
+      INSERT INTO notifications (org_id, contact_id, channel, status, provider, provider_message_id, sent_at)
+      VALUES (${usuario.org_id}, ${pessoa.id}, 'email', 'sent', 'resend', ${idEmail}, now())
+      RETURNING id, created_at`
+    const [envioSms] = await db`
+      INSERT INTO notifications (org_id, contact_id, channel, status, provider, provider_message_id, sent_at)
+      VALUES (${usuario.org_id}, ${pessoa.id}, 'sms', 'sent', 'smsdev', ${idSms}, now())
+      RETURNING id, created_at`
+
+    const postar = (url, corpo) =>
+      fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(corpo),
+      })
+
+    try {
+      // ── E-mail: entrega ──
+      const entregue = await postar(`${BASE}/api/retorno/email/${tokenEmail}`, {
+        type: 'email.delivered',
+        data: { email_id: idEmail, to: [endereco] },
+      })
+      checar('retorno de e-mail aceita o token', entregue.status === 200, `status ${entregue.status}`)
+
+      const [linhaEmail] = await db`
+        SELECT status FROM notifications WHERE id = ${envioEmail.id} AND created_at = ${envioEmail.created_at}`
+      checar('e o e-mail vira "entregue"', linhaEmail?.status === 'delivered', `status ${linhaEmail?.status}`)
+
+      /*
+       * O caso que justifica a rota inteira: hard bounce tem de virar supressão
+       * na hora. Sem isso o endereço morto fica na fila e queima o domínio.
+       */
+      await postar(`${BASE}/api/retorno/email/${tokenEmail}`, {
+        type: 'email.bounced',
+        data: { email_id: idEmail, to: [endereco], bounce: { type: 'Permanent' } },
+      })
+
+      const [bloqueio] = await db`
+        SELECT reason FROM suppressions WHERE contact_id = ${pessoa.id} AND channel = 'email'`
+      checar('hard bounce vira supressão na hora', bloqueio?.reason === 'hard_bounce', `motivo ${bloqueio?.reason}`)
+
+      // E não pode virar opt-out: ninguém pediu para sair (§14.1).
+      const [aposBounce] = await db`SELECT opted_out_at FROM contacts WHERE id = ${pessoa.id}`
+      checar('e NÃO marca a pessoa como descadastrada', aposBounce?.opted_out_at === null)
+
+      // Soft bounce não bloqueia: caixa cheia esvazia amanhã.
+      const outroEndereco = `fumaca-soft-${randomBytes(4).toString('hex')}@exemplo.com`
+      const [softPessoa] = await db`
+        INSERT INTO contacts (org_id, name, email) VALUES (${usuario.org_id}, 'Fumaça soft', ${outroEndereco})
+        RETURNING id`
+      try {
+        await postar(`${BASE}/api/retorno/email/${tokenEmail}`, {
+          type: 'email.bounced',
+          data: { to: [outroEndereco], bounce: { type: 'Transient', subType: 'MailboxFull' } },
+        })
+        const [semBloqueio] = await db`
+          SELECT count(*)::int AS n FROM suppressions WHERE contact_id = ${softPessoa.id}`
+        checar('soft bounce NÃO bloqueia o endereço', semBloqueio.n === 0, `${semBloqueio.n} linha(s)`)
+      } finally {
+        await db`DELETE FROM suppressions WHERE contact_id = ${softPessoa.id}`
+        await db`DELETE FROM contacts WHERE id = ${softPessoa.id}`
+      }
+
+      // ── SMS: a DLR chega por GET ──
+      const dlr = await fetch(`${BASE}/api/retorno/sms/${tokenSms}?id=${idSms}&situacao=DELIVERED`)
+      checar('DLR do SMS aceita o token por GET', dlr.status === 200, `status ${dlr.status}`)
+
+      const [linhaSms] = await db`
+        SELECT status FROM notifications WHERE id = ${envioSms.id} AND created_at = ${envioSms.created_at}`
+      checar('e o SMS vira "entregue"', linhaSms?.status === 'delivered', `status ${linhaSms?.status}`)
+
+      // ── Telegram: a captura do chat, que é a razão da rota existir ──
+      const start = await postar(`${BASE}/api/retorno/telegram/${tokenTelegram}`, {
+        update_id: 1,
+        message: { message_id: 1, chat: { id: chatId }, from: { first_name: 'Fumaça' }, text: `/start ${externo}` },
+      })
+      checar('retorno do Telegram aceita o token', start.status === 200, `status ${start.status}`)
+
+      const [vinculado] = await db`SELECT telegram_chat_id FROM contacts WHERE id = ${pessoa.id}`
+      checar(
+        'e o /start vincula o chat ao contato',
+        Number(vinculado?.telegram_chat_id) === chatId,
+        `chat ${vinculado?.telegram_chat_id}`,
+      )
+
+      await postar(`${BASE}/api/retorno/telegram/${tokenTelegram}`, {
+        update_id: 2,
+        message: { message_id: 2, chat: { id: chatId }, text: '/parar' },
+      })
+      const [saiuTelegram] = await db`SELECT optin_telegram FROM contacts WHERE id = ${pessoa.id}`
+      checar('/parar descadastra do Telegram', saiuTelegram?.optin_telegram === false)
+
+      /*
+       * Voltar atrás precisa funcionar: religar o opt-in sem limpar a supressão
+       * deixaria o /start sendo um botão que não faz nada (§5.3, guarda 2).
+       */
+      await postar(`${BASE}/api/retorno/telegram/${tokenTelegram}`, {
+        update_id: 3,
+        message: { message_id: 3, chat: { id: chatId }, text: `/start ${externo}` },
+      })
+      const [voltou] = await db`
+        SELECT count(*)::int AS n FROM suppressions WHERE contact_id = ${pessoa.id} AND channel = 'telegram'`
+      checar('e um /start novo remove a supressão', voltou.n === 0, `${voltou.n} linha(s)`)
+
+      // ── Cada token só serve ao seu canal ──
+      const trocado = await postar(`${BASE}/api/retorno/email/${tokenSms}`, {
+        type: 'email.delivered',
+        data: { email_id: idEmail },
+      })
+      checar('token de um canal não serve para outro', trocado.status === 401, `status ${trocado.status}`)
+
+      const desconhecido = await postar(`${BASE}/api/retorno/email/tokeninexistente1234567`, {
+        type: 'email.delivered',
+        data: { email_id: idEmail },
+      })
+      checar('retorno recusa token desconhecido', desconhecido.status === 401, `status ${desconhecido.status}`)
+    } finally {
+      await db`DELETE FROM notifications WHERE contact_id = ${pessoa.id}`
+      await db`DELETE FROM suppressions WHERE contact_id = ${pessoa.id}`
+      await db`DELETE FROM audit_log WHERE entity_id = ${pessoa.id}`
+      await db`DELETE FROM contacts WHERE id = ${pessoa.id}`
+      await db`DELETE FROM channel_configs WHERE id IN (${cfgEmail.id}, ${cfgSms.id}, ${cfgTelegram.id})`
+    }
+  }
+
   // Exportação CSV dos leads.
   {
     const r = await get('/api/leads/csv')

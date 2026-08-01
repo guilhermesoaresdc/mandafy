@@ -13,6 +13,7 @@ import { encryptSecret } from '@/lib/crypto'
 import { createLogger } from '@/lib/logger'
 import { toE164 } from '@/lib/phone'
 import { CANAL_PROVEDORES } from '@/lib/channels'
+import { gerarTokenRetorno } from '@/lib/channels/retorno-lookup'
 import {
   apagarInstancia,
   criarInstancia,
@@ -46,6 +47,8 @@ const canalSchema = z.object({
   remetente: z.string().trim().max(200).optional(),
   /** Só o WhatsApp usa: o endereço da Evolution. */
   url: z.string().trim().max(300).optional(),
+  /** Segredo com que o provedor assina o retorno (Resend, Telegram). */
+  webhookSecret: z.string().trim().max(200).optional(),
   ativo: z.coerce.boolean(),
 })
 
@@ -62,11 +65,12 @@ export async function salvarCanalAction(
     apiKey: formData.get('apiKey') ?? undefined,
     remetente: formData.get('remetente') ?? undefined,
     url: formData.get('url') ?? undefined,
+    webhookSecret: formData.get('webhookSecret') ?? undefined,
     ativo: formData.get('ativo') === 'on',
   })
   if (!parsed.success) return { erro: 'Dados inválidos.' }
 
-  const { canal, provider, apiKey, remetente, url, ativo } = parsed.data
+  const { canal, provider, apiKey, remetente, url, webhookSecret, ativo } = parsed.data
 
   const permitidos = CANAL_PROVEDORES[canal]
   if (!permitidos.includes(provider)) {
@@ -80,7 +84,11 @@ export async function salvarCanalAction(
   try {
     await withTenant(tenantOf(user), async (tx) => {
       const [existente] = await tx
-        .select({ id: channelConfigs.id, credentials: channelConfigs.credentialsEncrypted })
+        .select({
+          id: channelConfigs.id,
+          credentials: channelConfigs.credentialsEncrypted,
+          webhookToken: channelConfigs.webhookToken,
+        })
         .from(channelConfigs)
         .where(
           and(
@@ -106,11 +114,18 @@ export async function salvarCanalAction(
         ...(apiKey && canal === 'whatsapp' ? { apikey: apiKey } : {}),
         ...(remetente ? { remetente } : {}),
         ...(url ? { url: url.replace(/\/+$/, '') } : {}),
+        ...(webhookSecret ? { webhookSecret } : {}),
       }
 
       const novasCredenciais =
         Object.keys(mescladas).length > 0 ? encryptSecret(JSON.stringify(mescladas)) : null
 
+      /*
+       * O token do webhook nasce junto com o canal e nunca é regerado: ele já
+       * está colado no painel do provedor, e trocá-lo em um salvamento
+       * qualquer derrubaria o retorno em silêncio — o pior modo de falha que
+       * existe aqui, porque nada no painel muda de cor.
+       */
       if (existente) {
         await tx
           .update(channelConfigs)
@@ -119,6 +134,7 @@ export async function salvarCanalAction(
             active: ativo,
             // Campo em branco preserva a credencial atual.
             ...(novasCredenciais ? { credentialsEncrypted: novasCredenciais } : {}),
+            ...(existente.webhookToken ? {} : { webhookToken: gerarTokenRetorno() }),
             updatedAt: new Date(),
           })
           .where(eq(channelConfigs.id, existente.id))
@@ -132,6 +148,7 @@ export async function salvarCanalAction(
         active: ativo,
         isDefault: true,
         credentialsEncrypted: novasCredenciais,
+        webhookToken: gerarTokenRetorno(),
       })
     })
   } catch (erro) {

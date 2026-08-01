@@ -30,6 +30,8 @@ export const channelConfigs = pgTable(
     channel: text('channel', { enum: CHANNELS }).notNull(),
     provider: text('provider').notNull(),
     credentialsEncrypted: bytea('credentials_encrypted'),
+    /** Segredo na URL do webhook de retorno do provedor (drizzle/0019). */
+    webhookToken: text('webhook_token'),
     rateLimitPerMinute: integer('rate_limit_per_minute'),
     dailyCap: integer('daily_cap'),
     active: boolean('active').notNull().default(true),

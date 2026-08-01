@@ -18,6 +18,17 @@ export type EstadoCanal = {
   provider: string | null
   configurado: boolean
   ativo: boolean
+  /**
+   * Token do webhook de retorno, para a tela montar o endereço que se cola no
+   * painel do provedor.
+   *
+   * Este SAI daqui, ao contrário das credenciais, e a diferença é de natureza:
+   * a chave da Resend manda e-mail em nome do cliente, o token só recebe
+   * retorno. Quem o tiver consegue forjar um bounce — dano real, e é por isso
+   * que existe a assinatura por cima — mas não consegue enviar nada nem ler o
+   * que já foi enviado. A tela é de admin (§9.4).
+   */
+  webhookToken: string | null
 }
 
 export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
@@ -26,6 +37,7 @@ export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
       channel: channelConfigs.channel,
       provider: channelConfigs.provider,
       credentials: channelConfigs.credentialsEncrypted,
+      webhookToken: channelConfigs.webhookToken,
       active: channelConfigs.active,
       isDefault: channelConfigs.isDefault,
     })
@@ -40,6 +52,7 @@ export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
       provider: linha?.provider ?? null,
       configurado: Boolean(linha?.credentials && linha.credentials.length > 0),
       ativo: linha?.active ?? false,
+      webhookToken: linha?.webhookToken ?? null,
     }
   })
 }

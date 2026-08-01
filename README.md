@@ -202,6 +202,40 @@ reduz muito o risco, mas não o zera. Na prática:
 
 Seja direto com seus clientes sobre isso. É honesto, e protege você.
 
+## Conectando os outros três canais
+
+Cada canal precisa de duas coisas: a credencial (o Mandafy envia) e o endereço
+de avisos (o provedor responde). A segunda é a que se esquece, e o esquecimento
+é silencioso — o envio funciona, e só o retorno some.
+
+Depois de salvar a credencial em **Canais**, o cartão passa a mostrar o endereço
+de avisos daquele canal. Copie e cole onde o provedor pede:
+
+| Canal | Onde colar | O que deixa de funcionar sem isso |
+|---|---|---|
+| E-mail | Resend → Webhooks → Add Endpoint (eventos `delivered`, `bounced`, `complained`) | Endereço morto continua na fila e a entrega do domínio cai sozinha |
+| SMS | Campo de callback/DLR no painel do provedor | Todo SMS fica em "enviado" para sempre |
+| Telegram | `setWebhook` (o cartão monta o comando pronto) | O canal inteiro: sem isso o `/start` não chega e nenhum chat é capturado |
+
+O e-mail e o Telegram aceitam um **segredo de assinatura** opcional, conferido
+por cima do token da URL. Sem ele o endereço já é secreto; com ele, nem um
+endereço vazado permite forjar um bounce — e um bounce forjado é um cliente
+bloqueado sem motivo.
+
+### E-mail: o DNS vem antes
+
+Verifique o domínio na Resend e espere SPF, DKIM e DMARC ficarem verdes **antes**
+do primeiro envio. Use subdomínio dedicado (`envio.seudominio.com.br`), nunca o
+domínio principal. O remetente é um endereço dentro dele, não o domínio solto:
+`Nome <nao-responda@envio.seudominio.com.br>`.
+
+### Telegram: a captura é o problema, não o envio
+
+O `chat_id` só existe depois que a pessoa fala com o bot. O caminho é o link de
+captura — `https://t.me/SeuBot?start={contact_external_id}` — na página de
+obrigado da plataforma e na primeira mensagem de WhatsApp. O `/start` chega já
+vinculado ao contato, e é o webhook acima que grava o vínculo.
+
 ## LGPD
 
 Requisito de arquitetura, não seção jurídica decorativa. O que já está no

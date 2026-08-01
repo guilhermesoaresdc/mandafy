@@ -44,6 +44,7 @@ export function ConfigurarCanal({
   const chaveId = useId()
   const remetenteId = useId()
   const urlId = useId()
+  const segredoId = useId()
 
   const provedores = CANAL_PROVEDORES[canal]
 
@@ -136,6 +137,34 @@ export function ConfigurarCanal({
             maxLength={200}
             placeholder={canal === 'email' ? 'Mandafy <envio@seudominio.com.br>' : 'MANDAFY'}
             aria-describedby={fieldDescriptionId(remetenteId)}
+          />
+        </Field>
+      ) : null}
+
+      {/*
+        Segredo com que o provedor assina os avisos que manda de volta. Opcional
+        de propósito: exigir antes de existir deixaria o retorno sendo descartado
+        durante a configuração — que é justamente quando os primeiros erros de
+        endereço aparecem. Preenchido, passa a ser conferido em toda chamada.
+      */}
+      {canal === 'email' || canal === 'telegram' ? (
+        <Field
+          label="Segredo de assinatura dos avisos (opcional)"
+          htmlFor={segredoId}
+          hint={
+            canal === 'email'
+              ? 'Na Resend, ao criar o webhook: começa com whsec_. Sem ele, só a URL protege.'
+              : 'Você escolhe este valor e repete no setWebhook, em secret_token.'
+          }
+        >
+          <Input
+            id={segredoId}
+            name="webhookSecret"
+            type="password"
+            autoComplete="off"
+            maxLength={200}
+            className="font-mono"
+            aria-describedby={fieldDescriptionId(segredoId)}
           />
         </Field>
       ) : null}

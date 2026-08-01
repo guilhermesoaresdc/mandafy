@@ -5,6 +5,7 @@ import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, ChannelIcon, Separator } from '@/components/ui'
 import { CHANNEL_COLOR_VAR, CHANNEL_LABELS, type Channel } from '@/db/schema/enums'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
+import { serverEnv } from '@/env'
 import { resolverServidorEvolution } from '@/lib/delivery/config'
 import { cn } from '@/lib/utils'
 import {
@@ -15,6 +16,7 @@ import {
 } from './actions'
 import { AcoesNumero } from './acoes-numero'
 import { ConectarNumero } from './conectar-numero'
+import { EnderecoRetorno } from './endereco-retorno'
 import { ConfigurarCanal } from './configurar'
 
 export const metadata: Metadata = { title: 'Canais · Mandafy' }
@@ -37,6 +39,9 @@ const CORES_SEMAFORO = {
 
 export default async function CanaisPage() {
   const user = await requireAdmin()
+
+  // O endereço público do app monta a URL de retorno que se cola no provedor.
+  const appUrl = serverEnv().APP_URL
 
   const { canais, instancias, servidorPronto } = await withTenant(tenantOf(user), async (tx) => ({
     canais: await estadoDosCanais(tx),
@@ -87,6 +92,16 @@ export default async function CanaisPage() {
                     ) : null}
                   </div>
                 </div>
+
+                {/* O endereço de avisos do provedor (§8.1). Sem ele o canal
+                    envia, mas nunca fica sabendo o que aconteceu depois. */}
+                {canal.configurado ? (
+                  <EnderecoRetorno
+                    canal={canal.canal}
+                    token={canal.webhookToken}
+                    appUrl={appUrl}
+                  />
+                ) : null}
 
                 <div className="flex items-center gap-2">
                   <ConfigurarCanal

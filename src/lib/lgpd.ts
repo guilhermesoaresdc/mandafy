@@ -10,7 +10,7 @@ import {
   notifications,
   suppressions,
 } from '@/db/schema'
-import { CHANNELS, type Channel } from '@/db/schema/enums'
+import { CHANNELS, type Channel, type SuppressionReason } from '@/db/schema/enums'
 import { createLogger } from '@/lib/logger'
 
 /**
@@ -290,6 +290,85 @@ export async function descadastrar(
   })
 
   log.info('contato descadastrado', { contactId, canais: canais.length })
+  return true
+}
+
+/**
+ * Bloqueio de um canal por decisão TÉCNICA do provedor (§3.3, §8.3).
+ *
+ * Diferente de `descadastrar`, e a diferença importa em dois lugares.
+ *
+ * Um bounce não é um pedido do titular: ninguém escolheu sair, o endereço é que
+ * não existe mais. Gravar isso como `optout` faria a tela de privacidade dizer
+ * que a pessoa pediu para sair — e é justamente esse registro que se apresenta
+ * quando a fiscalização pergunta quem pediu o quê. Por isso `reason` vem de
+ * quem chama (`hard_bounce`, `complaint`, `invalid`) e não é fixo.
+ *
+ * E nunca marca opt-out global: e-mail que dá bounce não diz nada sobre o
+ * WhatsApp da mesma pessoa. Bloquear os quatro canais por causa de um endereço
+ * morto perderia o contato inteiro por um dado que só vale para um deles.
+ *
+ * Reclamação de spam é a exceção parcial: continua sendo um canal só, mas o
+ * consentimento daquele canal cai junto — quem marcou como spam não consente,
+ * mesmo sem ter clicado em descadastrar.
+ */
+export async function bloquearCanal(
+  tx: Tx,
+  orgId: string,
+  contactId: string,
+  canal: Channel,
+  razao: Exclude<SuppressionReason, 'optout'>,
+  detalhe: string,
+  agora = new Date(),
+): Promise<boolean> {
+  const [contato] = await tx
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.id, contactId), eq(contacts.orgId, orgId)))
+    .limit(1)
+
+  if (!contato) return false
+
+  const coluna =
+    canal === 'whatsapp'
+      ? 'optinWhatsapp'
+      : canal === 'email'
+        ? 'optinEmail'
+        : canal === 'sms'
+          ? 'optinSms'
+          : 'optinTelegram'
+
+  await tx
+    .update(contacts)
+    .set({
+      // Endereço inexistente não retira consentimento — o dado pode voltar a
+      // ser válido se a pessoa corrigir o cadastro. A supressão já barra o
+      // envio (§5.3, guarda 2), e é ela que se remove quando o e-mail muda.
+      ...(razao === 'complaint' ? { [coluna]: false } : {}),
+      updatedAt: agora,
+    })
+    .where(eq(contacts.id, contactId))
+
+  const [gravada] = await tx
+    .insert(suppressions)
+    .values({ orgId, contactId, channel: canal, reason: razao, detail: detalhe })
+    .onConflictDoNothing()
+    .returning({ id: suppressions.id })
+
+  // Já estava bloqueado: o provedor repete o mesmo bounce a cada tentativa, e
+  // registrar auditoria por repetição encheria o log de linhas idênticas.
+  if (!gravada) return false
+
+  await tx.insert(auditLog).values({
+    orgId,
+    userId: null,
+    action: 'lgpd.bloquear_canal',
+    entity: 'contacts',
+    entityId: contactId,
+    after: { canal, razao, detalhe },
+  })
+
+  log.info('canal bloqueado pelo provedor', { contactId, canal, razao })
   return true
 }
 
