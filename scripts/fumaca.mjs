@@ -316,7 +316,22 @@ try {
        * de maior risco do sistema inteiro: falhar aqui significa continuar
        * mandando mensagem para quem pediu para parar (§14.1).
        */
-      const telefone = `+5511${String(Math.floor(Math.random() * 900000000) + 100000000)}`
+      /*
+       * Números fixos da faixa reservada para ficção (55 11 9xxxx-xxxx com
+       * prefixo 55555), e apagados antes de inserir.
+       *
+       * A versão anterior sorteava um número e derivava o segundo trocando o
+       * último dígito por zero — o que colide com o primeiro uma vez em dez,
+       * quando ele já termina em zero. Um teste que falha em 10% das execuções
+       * ensina a ignorar o vermelho, que é pior do que não ter o teste.
+       */
+      const telefone = '+5511955550001'
+      const telefoneEco = '+5511955550002'
+      await db`DELETE FROM suppressions WHERE contact_id IN (
+                 SELECT id FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco}))`
+      await db`DELETE FROM audit_log WHERE entity_id IN (
+                 SELECT id::text FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco}))`
+      await db`DELETE FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco})`
       const [quemPediu] = await db`
         INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
         VALUES (${usuario.org_id}, 'Fumaça', ${telefone}, true)
@@ -342,13 +357,13 @@ try {
         // Eco da NOSSA mensagem não pode descadastrar ninguém.
         const [outro] = await db`
           INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
-          VALUES (${usuario.org_id}, 'Fumaça eco', ${telefone.replace(/\d$/, '0')}, true)
+          VALUES (${usuario.org_id}, 'Fumaça eco', ${telefoneEco}, true)
           RETURNING id`
         try {
           await mandar('messages.upsert', {
             key: {
               id: 'OUT1',
-              remoteJid: `${telefone.replace('+', '').replace(/\d$/, '0')}@s.whatsapp.net`,
+              remoteJid: `${telefoneEco.replace('+', '')}@s.whatsapp.net`,
               fromMe: true,
             },
             message: { conversation: 'Para cancelar, responda SAIR.' },
