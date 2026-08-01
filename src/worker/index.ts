@@ -22,7 +22,7 @@ import { closeRedis, getQueueConnection } from '@/lib/redis'
 import { purgeExpiredSessions } from '@/lib/auth/session'
 import { normalizeRawEvent, reprocessPending, type NormalizeOutcome } from '@/lib/ingest/normalize'
 import { marcarEsgotado, processarEnvio, type DadosJobEnvio } from '@/lib/delivery/send'
-import { reenfileirarPendentes } from '@/lib/delivery/enqueue'
+import { reagendarEnvio, reenfileirarPendentes } from '@/lib/delivery/enqueue'
 import { avaliarEscada, limitesDoEstagio } from '@/lib/delivery/warmup'
 import { varrerLeadsAtrasados } from '@/lib/crm/criar-lead'
 import { organizations } from '@/db/schema'
@@ -182,6 +182,35 @@ async function runEnvio(job: Job<DadosJobEnvio>): Promise<string> {
     case 'cancelado':
     case 'ja_processado':
       return resultado.desfecho
+
+    /*
+     * A fila entregou antes da hora. `moveToDelayed` seria mais direto, mas
+     * ele exige o token do job — e o token some quando o job volta de um
+     * `stalled`. Reagendar pelo banco funciona nos dois casos e deixa
+     * `queueJobId` apontando para o job novo, que é o que a varredura de
+     * pendentes usa para saber que este envio ainda tem dono.
+     */
+    case 'cedo_demais': {
+      await withTenant(
+        { orgId: job.data.orgId, userId: job.data.orgId, isAdmin: true },
+        (tx) =>
+          reagendarEnvio(
+            tx,
+            {
+              notificationId: job.data.notificationId,
+              createdAt: new Date(job.data.createdAt),
+              orgId: job.data.orgId,
+            },
+            resultado.quando,
+          ),
+      )
+
+      log.warn('envio chegou adiantado e foi reagendado', {
+        notificationId: job.data.notificationId,
+        emSegundos: Math.round((resultado.quando.getTime() - Date.now()) / 1000),
+      })
+      return 'reagendado'
+    }
 
     case 'falhou': {
       if (!resultado.reenviavel) {

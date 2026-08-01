@@ -31,6 +31,8 @@ const INSTANCIA = uid('a04')
 const MSG = ['a11', 'a12', 'a13', 'a14'].map(uid)
 
 const jobsRemovidos: string[] = []
+/** O `delay` com que cada job foi para a fila — em milissegundos. */
+const atrasosEnfileirados: number[] = []
 
 vi.mock('@/lib/queue', async (original) => {
   const real = await original<typeof import('@/lib/queue')>()
@@ -38,7 +40,10 @@ vi.mock('@/lib/queue', async (original) => {
   return {
     ...real,
     getQueue: () => ({
-      add: () => Promise.resolve({ id: `job-${++contador}` }),
+      add: (_nome: string, _dados: unknown, opcoes?: { delay?: number }) => {
+        atrasosEnfileirados.push(opcoes?.delay ?? 0)
+        return Promise.resolve({ id: `job-${++contador}` })
+      },
       remove: (id: string) => {
         jobsRemovidos.push(id)
         return Promise.resolve()
@@ -86,6 +91,7 @@ describe.skipIf(!habilitado)('§5.1 — o PIX abandonado, resolvido', () => {
 
   beforeEach(async () => {
     jobsRemovidos.length = 0
+    atrasosEnfileirados.length = 0
 
     await admin.begin(async (tx) => {
       // Ordem importa: flow_steps aponta para messages com RESTRICT, então os
@@ -176,6 +182,39 @@ describe.skipIf(!habilitado)('§5.1 — o PIX abandonado, resolvido', () => {
     // cada um, para que dois pedidos criados no mesmo instante não saiam juntos.
     expect(offsets.map(Math.floor)).toEqual([5, 25, 120, 1200])
     expect(offsets.every((o, i) => o > [5, 25, 120, 1200][i]!)).toBe(true)
+  })
+
+  it('a FILA também recebe os quatro espaçados — não só a coluna', async () => {
+    /*
+     * A regressão que este teste existe para impedir.
+     *
+     * `scheduled_for` estava certo e o `delay` do job estava errado: ele era
+     * calculado contra o instante lógico do passo, não contra o relógio, e
+     * sobrava só o jitter. Os quatro saíam em segundos.
+     *
+     * O efeito não era "envio adiantado". Era o §5.1 inteiro deixar de existir:
+     * quando o pagamento chegava aos 3 minutos, os quatro já tinham saído e não
+     * havia mais nada para cancelar. Todos os testes de cancelamento
+     * continuavam verdes, porque olham o banco — e no banco estava certo.
+     */
+    /*
+     * Este é o único caso do arquivo datado no PRESENTE. Os outros usam
+     * `CRIADO` fixo, e para um evento de dois dias atrás o atraso correto é
+     * zero — o que esconderia justamente o defeito. Um pedido criado agora é o
+     * cenário real, e é onde a diferença aparece.
+     */
+    const agora = new Date()
+    await orderCreated(DADOS, agora)
+
+    const emMinutos = atrasosEnfileirados.map((ms) => ms / 60_000)
+    expect(emMinutos).toHaveLength(4)
+
+    for (const [i, esperado] of [5, 25, 120, 1200].entries()) {
+      // Folga de um minuto para baixo cobre o tempo de execução do teste; dois
+      // para cima cobrem o jitter de §7.2.
+      expect(emMinutos[i]).toBeGreaterThan(esperado - 1)
+      expect(emMinutos[i]).toBeLessThan(esperado + 2)
+    }
   })
 
   it('order.paid no minuto 3 cancela TODOS os quatro', async () => {

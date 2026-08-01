@@ -5,21 +5,42 @@
  * lexical. O drizzle-kit não é usado para gerar: partições, RLS, citext e
  * índices trigram não cabem no gerador.
  *
+ * O conteúdo NÃO é lido do disco: vem de `migrations.generated.ts`, embutido no
+ * bundle por `scripts/embutir-migrations.mjs`. Ler do disco funcionava no
+ * terminal e no Docker e falharia na Vercel, onde arquivo que ninguém importa
+ * não chega na função serverless — justamente onde não há terminal para
+ * consertar depois.
+ *
  * Conecta com DATABASE_URL_ADMIN (dono das tabelas, ignora RLS). Sem essa
  * variável cai para DATABASE_URL — aceitável em ambiente sem separação de
  * papéis, mas então o RLS não protege nada, porque a aplicação seria dona.
  *
- * Uso: npm run db:migrate
+ * Uso: npm run db:migrate — ou sozinho, na subida do app (ver instrumentation).
  */
 
-import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import postgres from 'postgres'
 import { usesTransactionPooler } from './index'
+import { MIGRATIONS } from './migrations.generated'
 
-const MIGRATIONS_DIR = join(process.cwd(), 'drizzle')
+/**
+ * Trava de aplicação para serializar quem migra.
+ *
+ * Na Vercel várias instâncias sobem ao mesmo tempo depois de um deploy, e todas
+ * chamariam isto. Sem trava, duas aplicariam o mesmo arquivo em paralelo: a
+ * segunda quebra no meio (índice já existe, coluna já existe) e deixa
+ * `_migrations` sem o registro — o pior dos mundos, porque a próxima tentativa
+ * encontra o banco meio migrado e o arquivo marcado como pendente.
+ *
+ * O número é arbitrário e só precisa ser estável entre processos.
+ */
+const TRAVA = 8_270_119
+
+export type ResultadoMigracao = {
+  aplicadas: string[]
+  jaAplicadas: number
+  /** Falhou? A mensagem é do Postgres, sem credencial. */
+  erro?: string
+}
 
 function adminUrl(): string {
   const url = process.env.DATABASE_URL_ADMIN ?? process.env.DATABASE_URL
@@ -31,19 +52,19 @@ function adminUrl(): string {
   return url
 }
 
-function checksum(content: string): string {
-  return createHash('sha256').update(content).digest('hex')
-}
-
-export async function runMigrations(): Promise<void> {
+export async function runMigrations(
+  aoAplicar: (nome: string) => void = () => {},
+): Promise<ResultadoMigracao> {
   const url = adminUrl()
   const sql = postgres(url, {
     max: 1,
     // Mesmo motivo de src/db/index.ts: atrás de um pooler em modo transação,
     // prepared statements não sobrevivem entre queries.
     prepare: !usesTransactionPooler(url),
-    onnotice: (n) => console.log(`  ↳ ${n.message}`),
+    onnotice: () => {},
   })
+
+  const aplicadas: string[] = []
 
   try {
     await sql`
@@ -54,63 +75,83 @@ export async function runMigrations(): Promise<void> {
       )
     `
 
-    const applied = await sql<{ name: string; checksum: string }[]>`
-      SELECT name, checksum FROM _migrations
-    `
-    const appliedByName = new Map(applied.map((r) => [r.name, r.checksum]))
+    /*
+     * A trava é pega FORA da transação de cada arquivo e solta no fim: ela
+     * precisa cobrir a leitura de `_migrations` até a última escrita, senão
+     * dois processos leem "pendente" ao mesmo tempo antes de qualquer um
+     * gravar.
+     */
+    await sql`SELECT pg_advisory_lock(${TRAVA})`
 
-    const files = (await readdir(MIGRATIONS_DIR))
-      .filter((f) => f.endsWith('.sql'))
-      .sort((a, b) => a.localeCompare(b, 'en'))
+    try {
+      const jaAplicadas = await sql<{ name: string; checksum: string }[]>`
+        SELECT name, checksum FROM _migrations
+      `
+      const porNome = new Map(jaAplicadas.map((r) => [r.name, r.checksum]))
 
-    if (files.length === 0) {
-      console.log('Nenhuma migration encontrada em drizzle/.')
-      return
-    }
+      for (const migration of MIGRATIONS) {
+        const anterior = porNome.get(migration.nome)
 
-    let pending = 0
-
-    for (const file of files) {
-      const content = await readFile(join(MIGRATIONS_DIR, file), 'utf8')
-      const hash = checksum(content)
-      const previous = appliedByName.get(file)
-
-      if (previous !== undefined) {
-        if (previous !== hash) {
-          throw new Error(
-            `A migration ${file} já foi aplicada mas seu conteúdo mudou.\n` +
-              'Migrations aplicadas são imutáveis: crie um novo arquivo com a correção.',
-          )
+        if (anterior !== undefined) {
+          if (anterior !== migration.checksum) {
+            throw new Error(
+              `A migration ${migration.nome} já foi aplicada mas seu conteúdo mudou.\n` +
+                'Migrations aplicadas são imutáveis: crie um novo arquivo com a correção.',
+            )
+          }
+          continue
         }
-        continue
+
+        aoAplicar(migration.nome)
+
+        // Cada arquivo é atômico: ou aplica inteiro, ou nada.
+        await sql.begin(async (tx) => {
+          await tx.unsafe(migration.sql)
+          await tx`
+            INSERT INTO _migrations (name, checksum)
+            VALUES (${migration.nome}, ${migration.checksum})
+          `
+        })
+
+        aplicadas.push(migration.nome)
       }
 
-      pending += 1
-      process.stdout.write(`Aplicando ${file}… `)
-
-      // Cada arquivo é atômico: ou aplica inteiro, ou nada.
-      await sql.begin(async (tx) => {
-        await tx.unsafe(content)
-        await tx`INSERT INTO _migrations (name, checksum) VALUES (${file}, ${hash})`
-      })
-
-      console.log('ok')
+      return { aplicadas, jaAplicadas: porNome.size }
+    } finally {
+      await sql`SELECT pg_advisory_unlock(${TRAVA})`
     }
-
-    console.log(
-      pending === 0
-        ? `Nada a fazer: ${files.length} migrations já aplicadas.`
-        : `${pending} migration(s) aplicada(s).`,
-    )
   } finally {
     await sql.end({ timeout: 5 })
   }
 }
 
-// Executa apenas quando este arquivo é o ponto de entrada do processo.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runMigrations().catch((error: unknown) => {
-    console.error('\nFalha ao migrar:', error instanceof Error ? error.message : error)
-    process.exit(1)
-  })
+/** As migrations que ainda não rodaram, sem aplicar nada. Para o painel. */
+export async function migrationsPendentes(): Promise<{
+  pendentes: string[]
+  aplicadas: number
+  total: number
+}> {
+  const url = adminUrl()
+  const sql = postgres(url, { max: 1, prepare: !usesTransactionPooler(url), onnotice: () => {} })
+
+  try {
+    const existe = await sql<{ ok: boolean }[]>`
+      SELECT to_regclass('public._migrations') IS NOT NULL AS ok
+    `
+
+    if (!existe[0]?.ok) {
+      return { pendentes: MIGRATIONS.map((m) => m.nome), aplicadas: 0, total: MIGRATIONS.length }
+    }
+
+    const linhas = await sql<{ name: string }[]>`SELECT name FROM _migrations`
+    const nomes = new Set(linhas.map((l) => l.name))
+
+    return {
+      pendentes: MIGRATIONS.filter((m) => !nomes.has(m.nome)).map((m) => m.nome),
+      aplicadas: nomes.size,
+      total: MIGRATIONS.length,
+    }
+  } finally {
+    await sql.end({ timeout: 5 })
+  }
 }
