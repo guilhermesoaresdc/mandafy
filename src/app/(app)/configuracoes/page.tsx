@@ -73,6 +73,11 @@ export default async function ConfiguracoesPage() {
             texto: 'Direitos do titular, retenção e o registro de quem acessou o quê.',
             href: '/configuracoes/privacidade',
           },
+          {
+            titulo: 'Sistema',
+            texto: 'As mensagens estão saindo? O banco está em dia? O que para em silêncio aparece aqui.',
+            href: '/configuracoes/sistema',
+          },
         ].map((item) => (
           <Card key={item.href}>
             <CardBody className="flex items-center gap-3">

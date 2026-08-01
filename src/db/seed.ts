@@ -2,16 +2,24 @@
  * Popula o banco com o mínimo para o sistema abrir: organização, administrador,
  * perfis de ritmo de envio (§7.2) e o pipeline padrão (§9.2).
  *
- * Idempotente: rodar duas vezes não duplica nada.
+ * Idempotente: rodar duas vezes não duplica nada, e o conjunto roda sob
+ * `pg_advisory_lock` — dois cliques no botão da tela de sistema chegariam
+ * juntos, e vários dos passos são "procura, e se não achar insere", que em
+ * paralelo insere duas vezes.
+ *
  * Conecta com DATABASE_URL_ADMIN (dono das tabelas) porque escreve antes de
  * existir qualquer contexto de tenant.
  *
- * Uso: npm run db:seed
+ * NADA É IMPRESSO AQUI. A senha gerada volta no retorno, para quem chamou
+ * decidir como mostrar: no terminal ela pode ir para a tela, mas no servidor
+ * um `console.log` de senha e e-mail vira linha de log permanente (§14.1). O
+ * ponto de entrada de linha de comando é `seed-cli.ts`.
+ *
+ * Uso: npm run db:seed  — ou pelo painel, em Configurações → Sistema.
  */
 
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { eq } from 'drizzle-orm'
-import { pathToFileURL } from 'node:url'
 import postgres from 'postgres'
 import * as schema from './schema'
 import { usesTransactionPooler } from './index'
@@ -45,7 +53,22 @@ function adminUrl(): string {
   return url
 }
 
-export async function seed(): Promise<void> {
+/** Trava do seed. Número estável, vizinho do usado pelas migrations. */
+const TRAVA = 8_270_121
+
+export type ResultadoSeed = {
+  orgCriada: boolean
+  adminCriado: boolean
+  adminEmail: string
+  /** Só quando o administrador foi criado AGORA e sem senha no ambiente. */
+  senhaGerada?: string
+  perfis: number
+  pipelineCriado: boolean
+  mensagens: number
+  fluxos: number
+}
+
+export async function seed(): Promise<ResultadoSeed> {
   const url = adminUrl()
   const sql = postgres(url, {
     max: 1,
@@ -55,12 +78,16 @@ export async function seed(): Promise<void> {
   const db = drizzle(sql, { schema })
 
   try {
+    await sql`SELECT pg_advisory_lock(${TRAVA})`
+    try {
     // ── Organização ──────────────────────────────────────────────────────────
     let [org] = await db
       .select()
       .from(schema.organizations)
       .where(eq(schema.organizations.slug, ORG_SLUG))
       .limit(1)
+
+    let orgCriada = false
 
     if (!org) {
       ;[org] = await db
@@ -71,9 +98,7 @@ export async function seed(): Promise<void> {
           timezone: process.env.DEFAULT_TIMEZONE ?? 'America/Sao_Paulo',
         })
         .returning()
-      console.log('✓ Organização criada.')
-    } else {
-      console.log('· Organização já existe.')
+      orgCriada = true
     }
 
     if (!org) throw new Error('Não foi possível criar a organização.')
@@ -86,9 +111,12 @@ export async function seed(): Promise<void> {
       .where(eq(schema.users.email, adminEmail))
       .limit(1)
 
+    let adminCriado = false
+    let senhaGerada: string | undefined
+
     if (!existingAdmin) {
       // Nunca uma senha fixa em código. Sem SEED_ADMIN_PASSWORD, geramos uma e
-      // imprimimos — é a única vez que ela aparece.
+      // devolvemos — é a única vez que ela existe em claro.
       const provided = process.env.SEED_ADMIN_PASSWORD
       const password = provided && provided.length > 0 ? provided : generatePassword()
 
@@ -100,14 +128,8 @@ export async function seed(): Promise<void> {
         role: 'admin',
       })
 
-      console.log('✓ Administrador criado.')
-      console.log(`    e-mail: ${adminEmail}`)
-      if (!provided) {
-        console.log(`    senha:  ${password}`)
-        console.log('    ⚠ Guarde agora: esta senha não será exibida de novo.')
-      }
-    } else {
-      console.log('· Administrador já existe.')
+      adminCriado = true
+      if (!provided) senhaGerada = password
     }
 
     // ── Perfis de ritmo de envio (§7.2) ──────────────────────────────────────
@@ -129,13 +151,9 @@ export async function seed(): Promise<void> {
         .returning({ id: schema.jitterProfiles.id })
       createdProfiles += inserted.length
     }
-    console.log(
-      createdProfiles > 0
-        ? `✓ ${createdProfiles} perfil(is) de ritmo criado(s).`
-        : '· Perfis de ritmo já existem.',
-    )
 
     // ── Pipeline padrão (§9.2) ───────────────────────────────────────────────
+    let pipelineCriado = false
     let [pipeline] = await db
       .select()
       .from(schema.pipelines)
@@ -161,31 +179,26 @@ export async function seed(): Promise<void> {
           isLost: s.isLost,
         })),
       )
-      console.log('✓ Pipeline padrão criado com 5 etapas.')
-    } else {
-      console.log('· Pipeline já existe.')
+      pipelineCriado = true
     }
 
     // ── Mensagens e fluxos-modelo (§5.2, §6) ─────────────────────────────────
     const modelos = await seedFlows(db, org.id)
-    console.log(
-      modelos.mensagens > 0 || modelos.fluxos > 0
-        ? `✓ ${modelos.mensagens} mensagem(ns) e ${modelos.fluxos} fluxo(s)-modelo criados.`
-        : '· Mensagens e fluxos-modelo já existem.',
-    )
-    if (modelos.fluxos > 0) {
-      console.log('    Os fluxos nascem PAUSADOS. Revise o texto e ative quando quiser.')
-    }
 
-    console.log('\nSeed concluído.')
+    return {
+      orgCriada,
+      adminCriado,
+      adminEmail,
+      ...(senhaGerada ? { senhaGerada } : {}),
+      perfis: createdProfiles,
+      pipelineCriado,
+      mensagens: modelos.mensagens,
+      fluxos: modelos.fluxos,
+    }
+    } finally {
+      await sql`SELECT pg_advisory_unlock(${TRAVA})`
+    }
   } finally {
     await sql.end({ timeout: 5 })
   }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  seed().catch((error: unknown) => {
-    console.error('\nFalha no seed:', error instanceof Error ? error.message : error)
-    process.exit(1)
-  })
 }

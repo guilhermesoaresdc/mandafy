@@ -122,7 +122,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -573,6 +573,25 @@ try {
       await db`DELETE FROM contacts WHERE id = ${pessoa.id}`
       await db`DELETE FROM channel_configs WHERE id IN (${cfgEmail.id}, ${cfgSms.id}, ${cfgTelegram.id})`
     }
+  }
+
+  /*
+   * A tela de Sistema precisa DIAGNOSTICAR, não só renderizar.
+   *
+   * O teste roda com o papel restrito (`mandafy_app`), então ela tem de dizer
+   * que o isolamento está ativo. Se dissesse "desligado" aqui, a checagem
+   * estaria invertida — e o operador de produção veria verde justamente onde
+   * há problema.
+   */
+  {
+    const r = await get('/configuracoes/sistema')
+    const corpo = await r.text()
+
+    checar('tela de Sistema mostra a estrutura do banco em dia', corpo.includes('em dia'))
+    checar(
+      'e reconhece o papel restrito da conexão',
+      corpo.includes('mandafy_app') && corpo.includes('as políticas valem'),
+    )
   }
 
   // Exportação CSV dos leads.
