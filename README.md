@@ -121,9 +121,15 @@ variável configurada, a rota recusa tudo.
 
 | Agendador | Intervalo | Como ligar |
 |---|---|---|
-| Vercel Cron | 1 min no Pro, **1 dia no Hobby** | já vem em `vercel.json`; basta definir `CRON_SECRET` |
-| GitHub Actions | 5 min, grátis | `.github/workflows/batimento.yml`; defina os segredos `MANDAFY_URL` e `CRON_SECRET` |
+| **GitHub Actions** | 5 min, grátis | `.github/workflows/batimento.yml`; defina os segredos `MANDAFY_URL` e `CRON_SECRET` |
+| Vercel Cron | 1×/dia | já vem em `vercel.json`; basta definir `CRON_SECRET` |
 | QStash, cron-job.org, UptimeRobot | 1 min | apontar para a URL com o header |
+
+O `vercel.json` agenda **uma vez por dia**, de propósito: o plano Hobby não
+aceita frequência maior, e um agendamento recusado faz o deploy inteiro falhar
+— trocar o motor de envio por um site que não atualiza é péssimo negócio. Ele
+serve de piso para a manutenção; a cadência real de envio vem do GitHub
+Actions. No plano Pro, troque para `* * * * *` se quiser reação em um minuto.
 
 O worker continua sendo melhor onde couber: reage no instante em vez de
 esperar o próximo intervalo, e não tem teto de duração. Os dois podem conviver
