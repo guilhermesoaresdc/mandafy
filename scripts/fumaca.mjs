@@ -122,7 +122,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -316,7 +316,22 @@ try {
        * de maior risco do sistema inteiro: falhar aqui significa continuar
        * mandando mensagem para quem pediu para parar (§14.1).
        */
-      const telefone = `+5511${String(Math.floor(Math.random() * 900000000) + 100000000)}`
+      /*
+       * Números fixos da faixa reservada para ficção (55 11 9xxxx-xxxx com
+       * prefixo 55555), e apagados antes de inserir.
+       *
+       * A versão anterior sorteava um número e derivava o segundo trocando o
+       * último dígito por zero — o que colide com o primeiro uma vez em dez,
+       * quando ele já termina em zero. Um teste que falha em 10% das execuções
+       * ensina a ignorar o vermelho, que é pior do que não ter o teste.
+       */
+      const telefone = '+5511955550001'
+      const telefoneEco = '+5511955550002'
+      await db`DELETE FROM suppressions WHERE contact_id IN (
+                 SELECT id FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco}))`
+      await db`DELETE FROM audit_log WHERE entity_id IN (
+                 SELECT id::text FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco}))`
+      await db`DELETE FROM contacts WHERE phone_e164 IN (${telefone}, ${telefoneEco})`
       const [quemPediu] = await db`
         INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
         VALUES (${usuario.org_id}, 'Fumaça', ${telefone}, true)
@@ -342,13 +357,13 @@ try {
         // Eco da NOSSA mensagem não pode descadastrar ninguém.
         const [outro] = await db`
           INSERT INTO contacts (org_id, name, phone_e164, optin_whatsapp)
-          VALUES (${usuario.org_id}, 'Fumaça eco', ${telefone.replace(/\d$/, '0')}, true)
+          VALUES (${usuario.org_id}, 'Fumaça eco', ${telefoneEco}, true)
           RETURNING id`
         try {
           await mandar('messages.upsert', {
             key: {
               id: 'OUT1',
-              remoteJid: `${telefone.replace('+', '').replace(/\d$/, '0')}@s.whatsapp.net`,
+              remoteJid: `${telefoneEco.replace('+', '')}@s.whatsapp.net`,
               fromMe: true,
             },
             message: { conversation: 'Para cancelar, responda SAIR.' },
@@ -573,6 +588,25 @@ try {
       await db`DELETE FROM contacts WHERE id = ${pessoa.id}`
       await db`DELETE FROM channel_configs WHERE id IN (${cfgEmail.id}, ${cfgSms.id}, ${cfgTelegram.id})`
     }
+  }
+
+  /*
+   * A tela de Sistema precisa DIAGNOSTICAR, não só renderizar.
+   *
+   * O teste roda com o papel restrito (`mandafy_app`), então ela tem de dizer
+   * que o isolamento está ativo. Se dissesse "desligado" aqui, a checagem
+   * estaria invertida — e o operador de produção veria verde justamente onde
+   * há problema.
+   */
+  {
+    const r = await get('/configuracoes/sistema')
+    const corpo = await r.text()
+
+    checar('tela de Sistema mostra a estrutura do banco em dia', corpo.includes('em dia'))
+    checar(
+      'e reconhece o papel restrito da conexão',
+      corpo.includes('mandafy_app') && corpo.includes('as políticas valem'),
+    )
   }
 
   // Exportação CSV dos leads.
