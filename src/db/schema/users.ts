@@ -41,7 +41,35 @@ export const sessions = pgTable(
   (t) => [index('sessions_user_idx').on(t.userId), index('sessions_expires_idx').on(t.expiresAt)],
 )
 
+/**
+ * Links de uso único para definir senha (§9.4).
+ *
+ * Convite de equipe e "esqueci minha senha" são o mesmo mecanismo visto de dois
+ * lados — `purpose` só muda o texto do e-mail e o prazo. Dois mecanismos
+ * separados dobrariam a superfície e a chance de um envelhecer sem manutenção.
+ *
+ * O `tokenHash` é o sha256 do token; o token cru existe apenas dentro do link
+ * enviado. Mesma decisão de `sessions`.
+ */
+export const authTokens = pgTable(
+  'auth_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    purpose: text('purpose', { enum: ['convite', 'recuperacao'] }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('auth_tokens_user_idx').on(t.userId, t.createdAt.desc())],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
+export type AuthToken = typeof authTokens.$inferSelect
+export type NewAuthToken = typeof authTokens.$inferInsert
 export type Session = typeof sessions.$inferSelect
 export type NewSession = typeof sessions.$inferInsert

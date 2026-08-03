@@ -74,6 +74,11 @@ export default async function ConfiguracoesPage() {
             href: '/configuracoes/privacidade',
           },
           {
+            titulo: 'Equipe',
+            texto: 'Quem tem acesso ao painel. Ninguém entra sem estar nesta lista.',
+            href: '/configuracoes/equipe',
+          },
+          {
             titulo: 'Sistema',
             texto: 'As mensagens estão saindo? O banco está em dia? O que para em silêncio aparece aqui.',
             href: '/configuracoes/sistema',

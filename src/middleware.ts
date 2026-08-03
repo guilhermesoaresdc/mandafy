@@ -14,8 +14,21 @@ import { NextResponse, type NextRequest } from 'next/server'
 const SESSION_COOKIE = 'mandafy_session'
 const LOGIN_PATH = '/entrar'
 
+/**
+ * Telas que existem PARA quem não consegue entrar.
+ *
+ * Mandá-las para o login seria um laço: a pessoa clica no link do e-mail para
+ * criar a senha, cai na tela de entrada, e não tem senha para entrar. O acesso
+ * aqui é autorizado pelo token na URL, conferido na própria página.
+ */
+const SEM_SESSAO = ['/definir-senha', '/recuperar']
+
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl
+
+  if (SEM_SESSAO.some((rota) => pathname === rota || pathname.startsWith(`${rota}/`))) {
+    return NextResponse.next()
+  }
 
   /*
    * A tela de entrada NUNCA é redirecionada daqui.

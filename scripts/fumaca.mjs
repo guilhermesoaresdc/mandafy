@@ -122,7 +122,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/configuracoes/equipe', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
@@ -625,6 +625,55 @@ try {
       'e reconhece o papel restrito da conexão',
       corpo.includes('mandafy_app') && corpo.includes('as políticas valem'),
     )
+  }
+
+  /*
+   * O caminho de quem AINDA NÃO consegue entrar (§9.4).
+   *
+   * Três telas públicas que o middleware precisa deixar passar. Se ele as
+   * redirecionar para o login, o link do e-mail vira um laço: a pessoa clica
+   * para criar a senha, cai na entrada, e não tem senha para entrar.
+   */
+  {
+    const semSessao = (p) => fetch(`${BASE}${p}`, { redirect: 'manual' })
+
+    const recuperar = await semSessao('/recuperar')
+    checar('/recuperar abre sem sessão', recuperar.status === 200, `status ${recuperar.status}`)
+
+    const { createHash: ch, randomBytes: rb } = await import('node:crypto')
+    const tokenCru = rb(32).toString('base64url')
+
+    const [convidada] = await db`
+      INSERT INTO users (org_id, name, email, password_hash, role, active)
+      VALUES (${usuario.org_id}, 'Fumaça convite', 'fumaca-convite@teste.local', '', 'consultor', true)
+      ON CONFLICT (email) DO UPDATE SET password_hash = '', active = true
+      RETURNING id`
+
+    try {
+      await db`
+        INSERT INTO auth_tokens (user_id, token_hash, purpose, expires_at)
+        VALUES (${convidada.id}, ${ch('sha256').update(tokenCru).digest('hex')},
+                'convite', now() + interval '1 day')`
+
+      const pagina = await semSessao(`/definir-senha/${tokenCru}`)
+      const corpo = await pagina.text()
+      checar(
+        'o link do convite abre sem sessão',
+        pagina.status === 200 && corpo.includes('Crie sua senha'),
+        `status ${pagina.status}`,
+      )
+
+      const invalido = await semSessao(`/definir-senha/${rb(32).toString('base64url')}`)
+      const corpoInvalido = await invalido.text()
+      checar(
+        'e um token desconhecido é recusado com explicação',
+        invalido.status === 200 && corpoInvalido.includes('não funciona mais'),
+        `status ${invalido.status}`,
+      )
+    } finally {
+      await db`DELETE FROM auth_tokens WHERE user_id = ${convidada.id}`
+      await db`DELETE FROM users WHERE id = ${convidada.id}`
+    }
   }
 
   // Exportação CSV dos leads.
