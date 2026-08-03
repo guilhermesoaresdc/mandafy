@@ -135,6 +135,19 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     // O corpo gravado é o que o cliente receberia, com as variáveis resolvidas.
     expect(telegram?.rendered_body).toContain('R$ 49,90')
     expect(telegram?.rendered_body).not.toContain('{{')
+
+    /*
+     * O rodapé do e-mail precisa levar um LINK, não a chave do template.
+     *
+     * A checagem acima existia e não pegava isto: só o e-mail ganha rodapé de
+     * descadastro, e ela olhava o Telegram. O corpo ia para o cliente com
+     * "Para não receber mais: {{link_descadastro}}" — e como o cabeçalho
+     * List-Unsubscribe continuava correto, o Gmail mostrava o botão certo e o
+     * texto errado. Nada acusava, a não ser abrir a mensagem (§14.1).
+     */
+    const email = linhas.find((l) => l.channel === 'email')
+    expect(email?.rendered_body).not.toContain('{{')
+    expect(email?.rendered_body).toContain('/sair/')
   })
 
   it('canal desligado não entra no envio nem vira linha', async () => {

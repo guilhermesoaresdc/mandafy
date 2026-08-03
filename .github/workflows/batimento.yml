@@ -6,9 +6,17 @@
 # O Vercel Cron faz isso, mas no plano Hobby ele dispara UMA VEZ POR DIA — o
 # que, para um motor de recuperação de vendas, é o mesmo que não disparar.
 #
-# O Actions é gratuito e roda a cada 5 minutos. Não é preciso e a fila do
-# GitHub atrasa em horário de pico, mas 5 minutos de atraso num lembrete de
-# PIX é aceitável; um dia não é.
+# O Actions é gratuito. O `*/5` abaixo é um PEDIDO, não uma garantia: o GitHub
+# despriorizA agendamentos de repositórios de pouco movimento, e medindo as
+# execuções reais deste aqui o intervalo ficou entre 2 e 3 HORAS.
+#
+# Serve como rede de segurança e é melhor que nada, mas NÃO serve como único
+# agendador de um motor de recuperação de venda — um lembrete de PIX que sai
+# três horas depois chega quando a intenção de compra já passou.
+#
+# Para cadência real de 1 minuto, aponte um serviço externo para a mesma URL:
+# cron-job.org (grátis) ou o QStash da Upstash resolvem, e a configuração é
+# toda pelo navegador. Ver README, seção "Sem worker: o batimento".
 #
 # COMO LIGAR
 #
@@ -51,10 +59,19 @@ jobs:
           MANDAFY_URL: ${{ secrets.MANDAFY_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # FALHA, não passa em silêncio.
+          #
+          # A primeira versão saía com 0 aqui, para não pintar de vermelho um
+          # repositório recém-clonado. O efeito foi o oposto do pretendido: o
+          # fluxo rodou por horas, verde, sem chamar nada — e o sistema parecia
+          # vivo enquanto a fila não andava. É o mesmo modo de falha silenciosa
+          # que este projeto combate em toda parte; não vale a pena abrir
+          # exceção justamente no vigia.
           if [ -z "$MANDAFY_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "MANDAFY_URL ou CRON_SECRET não configurados — nada a fazer."
+            echo "::error::MANDAFY_URL e CRON_SECRET não estão configurados — nada foi enviado."
             echo "Configure em Settings → Secrets and variables → Actions."
-            exit 0
+            echo "Se este repositório não é a instalação de produção, desabilite este fluxo pela aba Actions."
+            exit 1
           fi
 
           # --max-time protege contra a rota travar e segurar o runner.
