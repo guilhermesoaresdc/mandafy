@@ -77,7 +77,17 @@ const TRAVA = 8_270_120
  * `sem_segredo` não vaza nada de útil para quem sonda: revela que o endpoint
  * está desconfigurado, o que já é visível pelo fato de ele recusar tudo.
  */
-type Autorizacao = 'ok' | 'sem_segredo' | 'nao_confere'
+type Autorizacao = 'ok' | 'sem_segredo' | 'segredo_curto' | 'nao_confere'
+
+/**
+ * Tamanho mínimo do segredo.
+ *
+ * Exigido aqui e não no esquema do ambiente: lá, uma regra violada derruba o
+ * app inteiro com erro opaco, e um segredo curto digitado no painel da
+ * hospedagem viraria queda total do site em vez de disparo automático parado.
+ * Aqui ele recusa só a chamada, e diz o porquê.
+ */
+const CRON_SECRET_MINIMO = 16
 
 function autorizar(request: NextRequest): Autorizacao {
   /*
@@ -88,6 +98,7 @@ function autorizar(request: NextRequest): Autorizacao {
    */
   const segredo = serverEnv().CRON_SECRET?.trim()
   if (!segredo) return 'sem_segredo'
+  if (segredo.length < CRON_SECRET_MINIMO) return 'segredo_curto'
 
   const header = request.headers.get('authorization') ?? ''
   const match = /^Bearer\s+(.+)$/i.exec(header.trim())
@@ -116,6 +127,17 @@ function recusa(motivo: Exclude<Autorizacao, 'ok'>): NextResponse {
           'A variável CRON_SECRET não existe neste ambiente. Defina-a nas variáveis do ' +
           'projeto e publique de novo — na Vercel, variável nova só vale a partir do ' +
           'próximo deploy.',
+      },
+      { status: 503 },
+    )
+  }
+
+  if (motivo === 'segredo_curto') {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'cron_secret_curto',
+        hint: `O CRON_SECRET deste ambiente tem menos de ${CRON_SECRET_MINIMO} caracteres. Um segredo curto se descobre por tentativa, e quem o descobrir dispara seus envios. Troque por um valor longo nos dois lados e publique de novo.`,
       },
       { status: 503 },
     )
