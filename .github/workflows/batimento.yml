@@ -85,9 +85,24 @@ jobs:
           cat resposta.json
           echo
 
-          # 401 é erro de configuração e precisa ficar vermelho: silenciá-lo
-          # faria o sistema parecer vivo por semanas sem enviar nada.
-          if [ "$codigo" != "200" ]; then
-            echo "::error::O batimento respondeu $codigo"
-            exit 1
-          fi
+          # Erro de configuração precisa ficar vermelho: silenciá-lo faria o
+          # sistema parecer vivo por semanas sem enviar nada. E cada código
+          # aponta para um painel diferente — dizer qual poupa a busca.
+          case "$codigo" in
+            200) ;;
+            401)
+              echo "::error::401 — o CRON_SECRET do GitHub não confere com o da Vercel."
+              echo "Confira se os dois valores são idênticos, sem espaço nem quebra de linha."
+              echo "Na Vercel, variável alterada só vale depois de publicar de novo."
+              exit 1
+              ;;
+            503)
+              echo "::error::503 — a Vercel não tem a variável CRON_SECRET neste deploy."
+              echo "Defina-a nas variáveis do projeto e publique de novo."
+              exit 1
+              ;;
+            *)
+              echo "::error::O batimento respondeu $codigo"
+              exit 1
+              ;;
+          esac
