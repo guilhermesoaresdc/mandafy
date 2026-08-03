@@ -65,20 +65,72 @@ const RESERVA_MS = 5_000
  */
 const TRAVA = 8_270_120
 
-function autorizado(request: NextRequest): boolean {
-  const segredo = serverEnv().CRON_SECRET
-  if (!segredo) return false
+/**
+ * Três desfechos, não dois.
+ *
+ * Responder 401 tanto para "o servidor não tem segredo configurado" quanto
+ * para "o segredo enviado não bate" custa horas de diagnóstico: quem opera não
+ * tem como saber de qual lado mexer, e os dois lados ficam parecendo errados
+ * ao mesmo tempo. São problemas diferentes, com correções em painéis
+ * diferentes, e a resposta precisa dizer qual é.
+ *
+ * `sem_segredo` não vaza nada de útil para quem sonda: revela que o endpoint
+ * está desconfigurado, o que já é visível pelo fato de ele recusar tudo.
+ */
+type Autorizacao = 'ok' | 'sem_segredo' | 'nao_confere'
+
+function autorizar(request: NextRequest): Autorizacao {
+  /*
+   * `trim` no segredo do ambiente: colar um valor num painel web arrasta
+   * espaço ou quebra de linha com frequência, e o resultado seria um 401
+   * eterno com os dois valores parecendo idênticos na tela. Um segredo não
+   * muda de significado por causa de espaço nas pontas.
+   */
+  const segredo = serverEnv().CRON_SECRET?.trim()
+  if (!segredo) return 'sem_segredo'
 
   const header = request.headers.get('authorization') ?? ''
   const match = /^Bearer\s+(.+)$/i.exec(header.trim())
   const enviado = match?.[1]?.trim()
-  if (!enviado) return false
+  if (!enviado) return 'nao_confere'
 
   // Comparação de tempo constante: comparar com === vaza o tamanho do prefixo
   // correto pelo tempo de resposta, e o segredo é adivinhável byte a byte.
   const a = Buffer.from(enviado, 'utf8')
   const b = Buffer.from(segredo, 'utf8')
-  return a.length === b.length && timingSafeEqual(a, b)
+  const confere = a.length === b.length && timingSafeEqual(a, b)
+
+  return confere ? 'ok' : 'nao_confere'
+}
+
+function recusa(motivo: Exclude<Autorizacao, 'ok'>): NextResponse {
+  if (motivo === 'sem_segredo') {
+    // 503 e não 401: o problema é do servidor, não de quem chamou. Um
+    // agendador que recebe 401 conclui que a própria credencial está errada e
+    // manda o operador procurar no lugar errado.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'cron_secret_ausente',
+        hint:
+          'A variável CRON_SECRET não existe neste ambiente. Defina-a nas variáveis do ' +
+          'projeto e publique de novo — na Vercel, variável nova só vale a partir do ' +
+          'próximo deploy.',
+      },
+      { status: 503 },
+    )
+  }
+
+  return NextResponse.json(
+    {
+      ok: false,
+      error: 'nao_autorizado',
+      hint:
+        'O segredo enviado não confere com o CRON_SECRET deste ambiente. Confira se o valor ' +
+        'no agendador é idêntico ao da Vercel, e se a Vercel foi publicada depois de ele mudar.',
+    },
+    { status: 401 },
+  )
 }
 
 async function bater(): Promise<NextResponse> {
@@ -126,16 +178,14 @@ async function bater(): Promise<NextResponse> {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  if (!autorizado(request)) {
-    return NextResponse.json({ ok: false, error: 'nao_autorizado' }, { status: 401 })
-  }
+  const autorizacao = autorizar(request)
+  if (autorizacao !== 'ok') return recusa(autorizacao)
   return bater()
 }
 
 /** POST para quem agenda por webhook (QStash e afins mandam POST). */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!autorizado(request)) {
-    return NextResponse.json({ ok: false, error: 'nao_autorizado' }, { status: 401 })
-  }
+  const autorizacao = autorizar(request)
+  if (autorizacao !== 'ok') return recusa(autorizacao)
   return bater()
 }

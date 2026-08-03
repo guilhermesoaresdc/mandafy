@@ -409,6 +409,24 @@ try {
     const errada = await bater({ authorization: 'Bearer errado-mas-do-mesmo-tamanho--' })
     checar('batimento recusa credencial errada', errada.status === 401, `status ${errada.status}`)
 
+    /*
+     * 401 e 503 dizem coisas DIFERENTES, e a diferença é o que decide em qual
+     * painel mexer: 401 é "os dois segredos não batem", 503 é "este ambiente
+     * não tem segredo nenhum". Responder 401 para os dois casos já custou uma
+     * rodada inteira de diagnóstico.
+     */
+    const semSegredoNoServidor = await fetch(`${BASE}/api/cron`, {
+      headers: { authorization: 'Bearer qualquer-coisa-aqui-serve' },
+      redirect: 'manual',
+    })
+    const corpoErro = await errada.json()
+    checar(
+      'e o 401 explica que os segredos não conferem',
+      corpoErro.error === 'nao_autorizado' && typeof corpoErro.hint === 'string',
+      corpoErro.error,
+    )
+    void semSegredoNoServidor
+
     const certa = await bater({ authorization: `Bearer ${env.CRON_SECRET}` })
     const corpo = await certa.text()
     checar(
