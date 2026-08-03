@@ -119,11 +119,21 @@ worker faria: envia o que venceu, devolve à fila o que falhou e roda a
 manutenção. Autentica por `CRON_SECRET` em `Authorization: Bearer`; sem a
 variável configurada, a rota recusa tudo.
 
-| Agendador | Intervalo | Como ligar |
+| Agendador | Intervalo real | Como ligar |
 |---|---|---|
-| **GitHub Actions** | 5 min, grátis | `.github/workflows/batimento.yml`; defina os segredos `MANDAFY_URL` e `CRON_SECRET` |
+| **cron-job.org / QStash** | 1 min | apontar para `/api/cron` com o header `Authorization: Bearer …` |
+| GitHub Actions | **2–3 h na prática** | `.github/workflows/batimento.yml`; segredos `MANDAFY_URL` e `CRON_SECRET` |
 | Vercel Cron | 1×/dia | já vem em `vercel.json`; basta definir `CRON_SECRET` |
-| QStash, cron-job.org, UptimeRobot | 1 min | apontar para a URL com o header |
+
+Atenção ao **intervalo real**, não ao pedido. O fluxo do GitHub Actions pede
+`*/5`, mas o GitHub despriorizA agendamentos de repositórios de pouco
+movimento: medindo as execuções deste projeto, o intervalo ficou entre 2 e 3
+horas. Como rede de segurança está ótimo; como único agendador de um motor de
+recuperação de venda, não serve — um lembrete de PIX que sai três horas depois
+chega quando a intenção de compra já passou.
+
+Para operar de verdade, use um agendador externo de 1 minuto. Os dois podem
+conviver.
 
 O `vercel.json` agenda **uma vez por dia**, de propósito: o plano Hobby não
 aceita frequência maior, e um agendamento recusado faz o deploy inteiro falhar

@@ -158,6 +158,20 @@ export async function enfileirarEnvio(
       canal,
       dados: pedido.dados,
       preheader: variante?.preheader ?? null,
+      /*
+       * O link de descadastro precisa entrar AQUI, na compilação.
+       *
+       * Sem ele, `render.ts` cai no literal `{{link_descadastro}}` e é isso que
+       * fica gravado em `rendered_body` — ou seja, é isso que chega ao cliente,
+       * no rodapé, no lugar do link. Quem quisesse sair leria uma chave de
+       * template.
+       *
+       * O cabeçalho `List-Unsubscribe` continuava certo, o que tornava a falha
+       * pior: o Gmail mostrava o botão de descadastro e o texto do e-mail
+       * mostrava lixo, então nada acusava o problema a não ser abrir a
+       * mensagem.
+       */
+      linkDescadastro: linkDescadastro(pedido.contactId),
       ...(canal === 'sms'
         ? { sms: { removerAcentuacao: variante?.stripAccents ?? false } }
         : {}),
