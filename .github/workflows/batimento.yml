@@ -101,6 +101,11 @@ jobs:
               echo "Defina-a nas variáveis do projeto e publique de novo."
               exit 1
               ;;
+            500)
+              # O corpo traz a mensagem do banco: é ela que diz onde olhar.
+              echo "::error::500 — o batimento estourou. A causa está no corpo acima."
+              exit 1
+              ;;
             *)
               echo "::error::O batimento respondeu $codigo"
               exit 1

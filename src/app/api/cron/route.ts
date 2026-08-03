@@ -155,7 +155,41 @@ function recusa(motivo: Exclude<Autorizacao, 'ok'>): NextResponse {
   )
 }
 
+/**
+ * Executa o batimento e NUNCA deixa uma exceção escapar crua.
+ *
+ * Sem isto o Next responde 500 com corpo vazio, e quem opera fica com um
+ * número. Aconteceu: o batimento passou a autenticar e começou a estourar por
+ * outro motivo, e o log do agendador dizia apenas "respondeu 500" — nenhuma
+ * pista de onde olhar, num ambiente cujo log de servidor quem opera não abre.
+ *
+ * A mensagem do Postgres vai no corpo porque é ela que diz o que fazer, e erro
+ * de esquema ou de permissão não carrega dado pessoal (§14.1). A rota já exige
+ * o segredo do cron para chegar até aqui, então não é informação pública.
+ */
 async function bater(): Promise<NextResponse> {
+  try {
+    return await baterMesmo()
+  } catch (erro) {
+    const mensagem = erro instanceof Error ? erro.message : String(erro)
+    log.error('batimento estourou', { reason: mensagem.slice(0, 200) })
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'batimento_falhou',
+        detail: mensagem.slice(0, 500),
+        hint:
+          'Se a mensagem citar uma tabela ou coluna que não existe, falta aplicar as ' +
+          'alterações do banco: abra /api/health e veja o campo "estrutura", ou ' +
+          'Configurações → Sistema.',
+      },
+      { status: 500 },
+    )
+  }
+}
+
+async function baterMesmo(): Promise<NextResponse> {
   const inicio = Date.now()
 
   const [trava] = await db.execute<{ pego: boolean }>(
