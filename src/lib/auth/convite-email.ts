@@ -35,36 +35,113 @@ type Dados = {
   organizacao: string
 }
 
-function corpo(dados: Dados): { assunto: string; texto: string } {
+/**
+ * O HTML e o texto puro da mesma mensagem.
+ *
+ * Os DOIS são obrigatórios, e não por capricho. O adaptador manda o campo
+ * `html` como está — sem ele, o texto puro iria para lá e chegaria como um
+ * bloco único, porque HTML engole quebra de linha. E sem o texto puro, quem lê
+ * e-mail sem HTML (e todo filtro de spam) recebe silêncio.
+ *
+ * O HTML é escrito com estilo em linha e sem CSS externo porque cliente de
+ * e-mail não carrega folha de estilo. O botão é uma tabela pelo mesmo motivo:
+ * é a única forma que o Outlook renderiza com fundo colorido.
+ *
+ * O endereço aparece POR EXTENSO embaixo do botão. Cliente corporativo bloqueia
+ * botão, gente desconfia de link escondido, e quem lê no celular às vezes
+ * precisa copiar para outro navegador.
+ */
+function escapar(texto: string): string {
+  return texto
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+type Texto = { assunto: string; titulo: string; frase: string; botao: string; prazo: string; rodape: string }
+
+function conteudo(dados: Dados): Texto {
   const primeiro = dados.nome.trim().split(/\s+/)[0] ?? ''
+  const ola = primeiro ? `Olá, ${primeiro}.` : 'Olá.'
 
   if (dados.proposito === 'convite') {
     return {
       assunto: `Seu acesso ao ${dados.organizacao}`,
-      texto:
-        `Olá${primeiro ? ` ${primeiro}` : ''},\n\n` +
-        `Você foi cadastrado no painel do ${dados.organizacao}. ` +
-        'Defina sua senha por este link:\n\n' +
-        `${dados.link}\n\n` +
-        'O link vale por 7 dias e só funciona uma vez.\n\n' +
-        'Se você não esperava este convite, ignore este e-mail — sem a senha, ninguém entra.',
+      titulo: ola,
+      frase: `Você foi cadastrado no painel do ${dados.organizacao}. Crie sua senha para entrar.`,
+      botao: 'Criar minha senha',
+      prazo: 'Este link vale por 7 dias e só funciona uma vez.',
+      rodape:
+        'Se você não esperava este convite, ignore este e-mail — sem definir a senha, ninguém entra.',
     }
   }
 
   return {
     assunto: `Redefinir sua senha do ${dados.organizacao}`,
-    texto:
-      `Olá${primeiro ? ` ${primeiro}` : ''},\n\n` +
-      'Recebemos um pedido para redefinir sua senha. Use este link:\n\n' +
-      `${dados.link}\n\n` +
-      'O link vale por 1 hora e só funciona uma vez.\n\n' +
-      'Se não foi você que pediu, ignore este e-mail. Sua senha atual continua valendo, ' +
-      'e ninguém consegue entrar sem ela.',
+    titulo: ola,
+    frase: 'Recebemos um pedido para redefinir sua senha.',
+    botao: 'Escolher senha nova',
+    prazo: 'Este link vale por 1 hora e só funciona uma vez.',
+    rodape:
+      'Se não foi você que pediu, ignore este e-mail. Sua senha atual continua valendo, e ninguém entra sem ela.',
   }
 }
 
+function montarTexto(t: Texto, link: string): string {
+  return [
+    t.titulo,
+    '',
+    t.frase,
+    '',
+    link,
+    '',
+    t.prazo,
+    '',
+    t.rodape,
+  ].join('\n')
+}
+
+function montarHtml(t: Texto, link: string, organizacao: string): string {
+  const href = escapar(link)
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<body style="margin:0;padding:24px;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:480px;background:#ffffff;border-radius:12px;padding:32px;">
+        <tr><td>
+          <p style="margin:0 0 24px;font-size:15px;font-weight:700;color:#111827;">${escapar(organizacao)}</p>
+
+          <p style="margin:0 0 8px;font-size:15px;color:#111827;">${escapar(t.titulo)}</p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.5;color:#4b5563;">${escapar(t.frase)}</p>
+
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="border-radius:8px;background:#111827;">
+              <a href="${href}" style="display:inline-block;padding:12px 20px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${escapar(t.botao)}</a>
+            </td></tr>
+          </table>
+
+          <p style="margin:24px 0 4px;font-size:12px;color:#6b7280;">Se o botão não abrir, copie este endereço:</p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.5;word-break:break-all;"><a href="${href}" style="color:#2563eb;">${href}</a></p>
+
+          <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">${escapar(t.prazo)}</p>
+
+          <hr style="border:0;border-top:1px solid #e5e7eb;margin:0 0 16px;" />
+          <p style="margin:0;font-size:12px;line-height:1.5;color:#9ca3af;">${escapar(t.rodape)}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+}
+
 export async function enviarLinkDeSenha(dados: Dados): Promise<ResultadoConvite> {
-  const { assunto, texto } = corpo(dados)
+  const t = conteudo(dados)
+  const texto = montarTexto(t, dados.link)
+  const html = montarHtml(t, dados.link, dados.organizacao)
 
   try {
     const canal = await withTenant(
@@ -79,8 +156,9 @@ export async function enviarLinkDeSenha(dados: Dados): Promise<ResultadoConvite>
     const resultado = await enviarPeloCanal(
       {
         para: dados.para,
-        assunto,
+        assunto: t.assunto,
         corpo: texto,
+        html,
         textoPuro: texto,
         /*
          * Sem link de descadastro, e isto é deliberado.
