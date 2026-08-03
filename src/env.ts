@@ -39,8 +39,18 @@ const serverSchema = z.object({
    * chega sem sessão. Ausente, a rota /api/cron recusa TODAS as chamadas: um
    * endpoint que envia mensagem e dispensa credencial é um endpoint que
    * qualquer um usa para queimar seus números.
+   *
+   * SEM `min()` AQUI, de propósito. O tamanho mínimo é exigido em
+   * `CRON_SECRET_MINIMO`, no ponto de uso.
+   *
+   * O motivo é desproporção de dano: este esquema é tudo-ou-nada, e uma regra
+   * violada aqui derruba o app INTEIRO com erro opaco. Quem digita um segredo
+   * curto no painel da hospedagem — o erro mais natural do mundo — perderia o
+   * site, e não apenas o disparo automático. Recusar a chamada do cron com uma
+   * mensagem clara resolve o mesmo problema sem transformar uma configuração
+   * fraca numa queda total.
    */
-  CRON_SECRET: z.string().min(16).optional(),
+  CRON_SECRET: z.string().optional(),
 
   // Evolution API (WhatsApp) — §8.2
   EVOLUTION_URL: z.url().optional(),
