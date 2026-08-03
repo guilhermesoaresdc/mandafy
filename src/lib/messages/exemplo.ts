@@ -27,6 +27,30 @@ export const CONTATO_EXEMPLO: DadosVariaveis = {
   // Mesmo instante nos dois formatos que os filtros aceitam.
   criado_em: '2026-07-30T14:32:00-03:00',
   expira_em: '2026-07-30T14:37:00-03:00',
+
+  /*
+   * Vocabulário de jogo do bicho (§4.1).
+   *
+   * A plataforma manda isto no evento `ticket.awarded`, e sem exemplo a prévia
+   * do editor mostrava o nome da variável cru para quem escreve a mensagem de
+   * resultado — que é a mais lida da operação.
+   *
+   * `milhar` é texto, e é de propósito: o primeiro prêmio pode sair `0742`, e
+   * como número o zero à esquerda some. Um resultado errado numa mensagem de
+   * prêmio é o pior erro possível de cometer.
+   */
+  /*
+   * Sem travessão, e de propósito. O rótulo do sorteio entra no SMS, e um `—`
+   * está fora do GSM-7: um caractere força a mensagem inteira para UCS-2, o
+   * limite cai de 160 para 70 e o custo triplica. Como exemplo, ele faria a
+   * prévia mentir sobre o preço para quem está escrevendo.
+   */
+  sorteio: 'PTV 18h',
+  modalidade: 'Grupo',
+  milhar: '7842',
+  grupo: '11',
+  bicho: 'Elefante',
+  link_resultado: 'https://premiabicho.exemplo.com.br/resultados/ptv',
 }
 
 /** Nomes disponíveis, para o editor listar ao lado do corpo. */

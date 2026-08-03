@@ -20,9 +20,37 @@ type ModeloMensagem = {
   key: string
   name: string
   category: MessageCategory
+  description?: string
   ignoreQuietHours?: boolean
   body: string
   subject?: string
+  /** Sobrescreve o padrão de canais ligados (`CANAIS_PADRAO`). */
+  canais?: Partial<Record<Channel, boolean>>
+  /**
+   * Variante escrita à mão para um canal (§6.1).
+   *
+   * O normal é a variante nascer sincronizada com o corpo, e é o certo para a
+   * maioria: um texto, quatro canais. Mas há mensagens em que a diferença entre
+   * os canais é do CONTEÚDO, não da formatação — o SMS que precisa caber em um
+   * segmento, o e-mail que ganha assunto e preheader, o Telegram que leva
+   * botão. Nesses casos sincronizar é perder a mensagem.
+   *
+   * Quem tem variante aqui nasce com `synced: false`: editar o corpo principal
+   * depois NÃO pode sobrescrever um texto que foi escrito de propósito.
+   */
+  variantes?: Partial<
+    Record<
+      Channel,
+      {
+        body?: string
+        subject?: string
+        preheader?: string
+        textBody?: string
+        buttons?: { text: string; url?: string }[]
+        stripAccents?: boolean
+      }
+    >
+  >
 }
 
 /**
@@ -162,6 +190,111 @@ Já deve estar na sua conta.`,
 
 {Quer aumentar suas chances|Que tal mais alguns números}? {{campanha|"A campanha"}} ainda está aberta.`,
   },
+
+  /**
+   * Deu no seu bicho (§3.4, §6.1) — a mensagem-modelo dos quatro canais.
+   *
+   * É a mais lida da operação e a única em que o CONTEÚDO muda de canal para
+   * canal, não só a formatação. Por isso as quatro variantes vêm escritas à
+   * mão, e é o exemplo de referência de quando não sincronizar.
+   *
+   * Duas decisões de conteúdo que valem para qualquer banca:
+   *
+   * O resultado sai ANTES do valor, nos quatro. Quem recebe já sabe que
+   * apostou; o que ele quer saber é se deu. Abrir com saudação e deixar a
+   * milhar no terceiro parágrafo é escrever para si mesmo.
+   *
+   * `{{milhar}}` nunca leva filtro. É texto justamente para preservar zero à
+   * esquerda — `0742` vira `742` no instante em que alguém o tratar como
+   * número, e resultado errado em mensagem de prêmio é o erro mais caro que
+   * esta caixa de texto permite cometer.
+   */
+  {
+    key: 'bicho_resultado_premiado',
+    name: 'Deu no seu bicho — resultado premiado',
+    category: 'transacional',
+    /*
+     * NÃO vem ligada a fluxo. O gatilho natural é `ticket.awarded`, que já é
+     * usado pelo fluxo "Você foi premiado" — dois fluxos no mesmo gatilho
+     * mandariam duas mensagens para a mesma pessoa pelo mesmo prêmio.
+     * Para usá-la, troque a mensagem daquele fluxo por esta.
+     */
+    description:
+      'Modelo dos quatro canais, com variante escrita à mão em cada um. Para ' +
+      'usar, troque a mensagem do fluxo "Você foi premiado" por esta — não ' +
+      'crie um fluxo novo em ticket.awarded, ou a pessoa recebe duas vezes.',
+    // Resultado de sorteio é transacional: quem apostou está esperando, e
+    // segurar até as 8h da manhã seguinte esvazia a notícia (§7.4).
+    ignoreQuietHours: true,
+    // Resultado premiado justifica os centavos do SMS — é a exceção de §8.4.
+    canais: { whatsapp: true, email: true, telegram: true, sms: true },
+
+    body: `🐘 **Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!**
+
+Sorteio **{{sorteio}}** · 1º prêmio: **{{milhar}}**
+Grupo {{grupo}} — {{bicho}}
+
+Seu palpite no {{modalidade|"grupo"}} bateu. Prêmio: **{{valor_cents|moeda}}** já creditado na sua conta.
+
+Conferir o resultado completo: {{link_resultado}}`,
+
+    variantes: {
+      /*
+       * SMS: um segmento GSM-7 são 160 caracteres, e cada segmento a mais é
+       * outra cobrança em cima de uma mensagem que já vai para todo mundo que
+       * ganhou. Sem spintax (o sorteio de variante pode estourar o limite sem
+       * avisar), sem emoji (força UCS-2 e derruba o limite para 70), sem
+       * acento — e o link encurtado pelo próprio sistema.
+       */
+      sms: {
+        body: `Deu no seu bicho! {{sorteio}}, 1o premio {{milhar}} - grupo {{grupo}} {{bicho}}. Voce ganhou {{valor_cents|moeda}}. Confira: {{link_resultado}}`,
+        stripAccents: true,
+      },
+
+      /*
+       * E-mail: assunto sem emoji e sem CAIXA ALTA — os dois são gatilho de
+       * filtro de spam, e queimar reputação numa mensagem que a pessoa QUER
+       * receber é o pior lugar para fazê-lo. O preheader repete o resultado
+       * porque é a segunda linha visível na caixa de entrada, e é o que decide
+       * a abertura.
+       */
+      email: {
+        subject: 'Deu no seu bicho — {{sorteio}}, grupo {{grupo}}',
+        preheader: '1º prêmio {{milhar}} · {{bicho}} · {{valor_cents|moeda}} creditados',
+        body: `Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!
+
+**Sorteio {{sorteio}}**
+1º prêmio: **{{milhar}}**
+Grupo {{grupo}} — {{bicho}}
+
+Seu palpite no {{modalidade|"grupo"}} bateu. O prêmio de **{{valor_cents|moeda}}** já está creditado na sua conta.
+
+[Conferir o resultado completo]({{link_resultado}})`,
+      },
+
+      /*
+       * Telegram: o botão é o que este canal tem e os outros não. Ele substitui
+       * o link no corpo — deixar os dois faz a pessoa ler a mesma coisa duas
+       * vezes e reduz o clique em vez de aumentar.
+       */
+      /*
+       * Escrito no MESMO Markdown reduzido dos outros, não em HTML cru: o
+       * renderizador é que produz as tags (§6.2), e um `<b>` digitado aqui
+       * chega ao cliente como `&lt;b&gt;` escapado, à vista.
+       */
+      telegram: {
+        body: `🐘 **Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!**
+
+Sorteio **{{sorteio}}**
+1º prêmio: **{{milhar}}**
+Grupo {{grupo}} — {{bicho}}
+
+Seu palpite no {{modalidade|"grupo"}} bateu.
+Prêmio: **{{valor_cents|moeda}}**, já creditado.`,
+        buttons: [{ text: '🐘 Ver resultado completo', url: '{{link_resultado}}' }],
+      },
+    },
+  },
 ]
 
 type ModeloPasso = {
@@ -293,6 +426,7 @@ export async function seedFlows(db: Db, orgId: string): Promise<{ mensagens: num
         key: modelo.key,
         name: modelo.name,
         category: modelo.category,
+        ...(modelo.description ? { description: modelo.description } : {}),
         body: modelo.body,
         ignoreQuietHours: modelo.ignoreQuietHours ?? false,
       })
@@ -301,13 +435,22 @@ export async function seedFlows(db: Db, orgId: string): Promise<{ mensagens: num
     if (!criada) continue
 
     await db.insert(schema.messageVariants).values(
-      (Object.keys(CANAIS_PADRAO) as Channel[]).map((canal) => ({
-        messageId: criada.id,
-        channel: canal,
-        enabled: CANAIS_PADRAO[canal],
-        ...(canal === 'email' && modelo.subject ? { subject: modelo.subject } : {}),
-        ...(canal === 'telegram' ? { parseMode: 'HTML' as const } : {}),
-      })),
+      (Object.keys(CANAIS_PADRAO) as Channel[]).map((canal) => {
+        const escrita = modelo.variantes?.[canal]
+
+        return {
+          messageId: criada.id,
+          channel: canal,
+          enabled: modelo.canais?.[canal] ?? CANAIS_PADRAO[canal],
+          // Variante escrita à mão nasce dessincronizada: editar o corpo
+          // principal depois não pode apagar um texto feito de propósito.
+          ...(escrita ? { synced: false, ...escrita } : {}),
+          ...(canal === 'email' && !escrita?.subject && modelo.subject
+            ? { subject: modelo.subject }
+            : {}),
+          ...(canal === 'telegram' ? { parseMode: 'HTML' as const } : {}),
+        }
+      }),
     )
 
     idPorChave.set(modelo.key, criada.id)
