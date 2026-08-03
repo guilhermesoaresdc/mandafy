@@ -1,8 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { Button, Field, Input, fieldDescriptionId } from '@/components/ui'
+import { Button, Field, Input, PasswordInput, fieldDescriptionId } from '@/components/ui'
 import { entrarAction, type EntrarState } from '@/lib/auth/actions'
 
 function Submit() {
@@ -33,10 +34,9 @@ export function EntrarForm() {
       </Field>
 
       <Field label="Senha" htmlFor="senha" error={state.error}>
-        <Input
+        <PasswordInput
           id="senha"
           name="senha"
-          type="password"
           autoComplete="current-password"
           required
           aria-invalid={state.error ? true : undefined}
@@ -45,6 +45,18 @@ export function EntrarForm() {
       </Field>
 
       <Submit />
+
+      {/*
+        Depois do botão, não antes: quem chega à tela quer entrar. O link de
+        recuperação acima do envio disputa atenção com a ação principal e é
+        clicado por engano.
+      */}
+      <Link
+        href="/recuperar"
+        className="text-center text-2xs text-ink-2 underline-offset-2 hover:underline"
+      >
+        Esqueci minha senha
+      </Link>
     </form>
   )
 }

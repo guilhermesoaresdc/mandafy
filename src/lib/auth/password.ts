@@ -37,7 +37,8 @@ const SALT_LENGTH = 16
 /** scrypt precisa de 128 * N * r bytes; a folga evita erro de maxmem. */
 const MAX_MEM = 128 * N * r * 2
 
-export const MIN_PASSWORD_LENGTH = 10
+export { MIN_PASSWORD_LENGTH } from './regras'
+import { MIN_PASSWORD_LENGTH } from './regras'
 
 export async function hashPassword(password: string): Promise<string> {
   if (password.length < MIN_PASSWORD_LENGTH) {
