@@ -76,7 +76,7 @@ atenção:
 | `SESSION_SECRET` | 32 bytes em hex. Assina os cookies de sessão |
 | `ENCRYPTION_KEY` | 32 bytes em hex. AES-256-GCM das credenciais de provedor no banco. **Perder esta chave torna as credenciais salvas ilegíveis** |
 | `DATABASE_URL` | Papel `mandafy_app`. RLS **sempre** aplicado — é o que o app e o worker usam |
-| `DATABASE_URL_ADMIN` | Dono das tabelas. Ignora RLS. Só `db:migrate` e `db:seed` |
+| `DATABASE_URL_ADMIN` | Dono das tabelas. Ignora RLS. Só `db:migrate`, `db:seed` e `db:modelos` |
 | `EVOLUTION_GLOBAL_APIKEY` | Chave da Evolution API. Sem ela o serviço não sobe |
 
 Os dois endereços de banco não são redundância: é o que faz o isolamento entre
