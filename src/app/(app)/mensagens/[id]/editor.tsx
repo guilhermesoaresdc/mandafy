@@ -9,7 +9,6 @@ import {
   CardBody,
   CardHeader,
   CardTitle,
-  ChannelPad,
   Field,
   Input,
   Separator,
@@ -28,13 +27,13 @@ import { amostras, contarCombinacoes, sementeDeTexto } from '@/lib/messages/spin
 import { corpoEfetivo } from '@/lib/messages/sync'
 import { cn } from '@/lib/utils'
 import {
-  alternarCanalAction,
   ressincronizarAction,
   salvarCorpoAction,
   salvarVarianteAction,
   type MensagemState,
 } from '../actions'
 import { EnviarTeste } from './enviar-teste'
+import { PadCanalMensagem } from './pad-canal'
 import { PreviaEmail, PreviaSms, PreviaTelegram, PreviaWhatsapp } from './previa'
 
 /**
@@ -403,14 +402,12 @@ export function EditorMensagem({
             {CHANNELS.map((canal) => {
               const variante = porCanal.get(canal)
               return (
-                <form key={canal} action={alternarCanalAction}>
-                  <input type="hidden" name="id" value={mensagem.id} />
-                  <input type="hidden" name="canal" value={canal} />
-                  <input type="hidden" name="ligar" value={variante?.enabled ? '0' : '1'} />
-                  <button type="submit" className="contents">
-                    <ChannelPad channel={canal} on={variante?.enabled ?? false} onChange={() => {}} />
-                  </button>
-                </form>
+                <PadCanalMensagem
+                  key={canal}
+                  messageId={mensagem.id}
+                  canal={canal}
+                  ligado={variante?.enabled ?? false}
+                />
               )
             })}
           </div>

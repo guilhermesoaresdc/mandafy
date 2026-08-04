@@ -49,8 +49,21 @@ export type PedidoEnvio = {
 }
 
 export type ResultadoCanal =
-  | { canal: Channel; situacao: 'enfileirado'; notificationId: string; quando: Date }
-  | { canal: Channel; situacao: 'reagendado'; notificationId: string; quando: Date }
+  | {
+      canal: Channel
+      situacao: 'enfileirado'
+      notificationId: string
+      /** Chave de partição — `processarEnvio` precisa dela junto com o id. */
+      notificationCreatedAt: Date
+      quando: Date
+    }
+  | {
+      canal: Channel
+      situacao: 'reagendado'
+      notificationId: string
+      notificationCreatedAt: Date
+      quando: Date
+    }
   | { canal: Channel; situacao: 'pulado'; motivo: MotivoSkip }
   | { canal: Channel; situacao: 'falhou'; motivo: string }
 
@@ -278,6 +291,7 @@ export async function enfileirarEnvio(
       canal,
       situacao: decisao.acao === 'reagendar' ? 'reagendado' : 'enfileirado',
       notificationId: linha.id,
+      notificationCreatedAt: linha.createdAt,
       quando: decisao.quando,
     })
   }

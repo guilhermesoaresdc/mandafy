@@ -9,12 +9,12 @@ import { serverEnv } from '@/env'
 import { resolverServidorEvolution } from '@/lib/delivery/config'
 import { cn } from '@/lib/utils'
 import {
-  alternarCanalConfigAction,
   alternarNumeroAction,
   desconectarNumeroAction,
   removerNumeroAction,
 } from './actions'
 import { AcoesNumero } from './acoes-numero'
+import { AlternarCanal } from './alternar'
 import { ConectarNumero } from './conectar-numero'
 import { EnderecoRetorno } from './endereco-retorno'
 import { ConfigurarCanal } from './configurar'
@@ -112,13 +112,7 @@ export default async function CanaisPage() {
                   />
 
                   {canal.configurado ? (
-                    <form action={alternarCanalConfigAction}>
-                      <input type="hidden" name="canal" value={canal.canal} />
-                      <input type="hidden" name="ativar" value={canal.ativo ? '0' : '1'} />
-                      <Button type="submit" variant="ghost" size="sm">
-                        {canal.ativo ? 'Desligar' : 'Ligar'}
-                      </Button>
-                    </form>
+                    <AlternarCanal canal={canal.canal} ativo={canal.ativo} />
                   ) : null}
                 </div>
               </CardBody>

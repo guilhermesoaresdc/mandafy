@@ -11,6 +11,7 @@ import { createLogger } from '@/lib/logger'
 import { normalizePhoneBR } from '@/lib/phone'
 import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 import { enfileirarEnvio } from '@/lib/delivery/enqueue'
+import { processarEnvio, type DesfechoEnvio } from '@/lib/delivery/send'
 import { MOTIVO_LABELS, type MotivoSkip } from '@/lib/delivery/guards'
 
 /**
@@ -114,11 +115,11 @@ export async function enviarTesteAction(
   const { messageId, canal, destino } = parsed.data
 
   try {
-    return await withTenant(tenantOf(user), async (tx) => {
+    const resultados = await withTenant(tenantOf(user), async (tx) => {
       const contato = await contatoDeTeste(tx, user.orgId, canal, destino)
-      if ('erro' in contato) return { erro: contato.erro }
+      if ('erro' in contato) return { erro: contato.erro } as const
 
-      const resultados = await enfileirarEnvio(tx, {
+      return await enfileirarEnvio(tx, {
         orgId: user.orgId,
         contactId: contato.id,
         messageId,
@@ -126,17 +127,59 @@ export async function enviarTesteAction(
         dados: CONTATO_EXEMPLO,
         teste: true,
       })
-
-      if (resultados.length === 0) return { erro: 'Mensagem não encontrada.' }
-
-      return {
-        linhas: resultados.map((r) => ({
-          canal: r.canal,
-          ok: r.situacao === 'enfileirado' || r.situacao === 'reagendado',
-          texto: descrever(r),
-        })),
-      }
     })
+
+    if ('erro' in resultados) return resultados
+    if (resultados.length === 0) return { erro: 'Mensagem não encontrada.' }
+
+    /*
+     * O teste ENVIA aqui, não deixa na fila.
+     *
+     * `enfileirarEnvio` só grava a linha em `queued`; quem envia de verdade é
+     * `processarEnvio`, chamado pelo worker ou pelo tick periódico. Numa
+     * publicação sem worker, o tick é uma requisição agendada — e entre uma e
+     * outra a linha fica parada. Para um fluxo isso é o esperado; para o botão
+     * "enviar teste" é um defeito: quem clicou está com o telefone na mão
+     * esperando, e a tela dizia "deve chegar em segundos" para uma mensagem
+     * que só sairia na próxima passagem do tick.
+     *
+     * Fora da transação de propósito: `processarEnvio` abre a sua, e chamá-lo
+     * dentro da nossa manteria a linha invisível para ele — a transição para
+     * `sending` é comparação-e-troca contra o que já está gravado.
+     *
+     * Envio duplo não acontece: se o tick pegar a mesma linha, só um dos dois
+     * UPDATEs encontra a notificação ainda pendente.
+     */
+    const desfechos = await Promise.all(
+      resultados.map(async (r) => {
+        if (r.situacao !== 'enfileirado') return { r, desfecho: null }
+        try {
+          const desfecho = await processarEnvio({
+            notificationId: r.notificationId,
+            createdAt: r.notificationCreatedAt.toISOString(),
+            orgId: user.orgId,
+          })
+          return { r, desfecho }
+        } catch (erro) {
+          log.error('falha ao enviar o teste na hora', {
+            canal: r.canal,
+            reason: erro instanceof Error ? erro.message.slice(0, 160) : 'desconhecido',
+          })
+          return { r, desfecho: null }
+        }
+      }),
+    )
+
+    return {
+      linhas: desfechos.map(({ r, desfecho }) => ({
+        canal: r.canal,
+        ok:
+          desfecho === null
+            ? r.situacao === 'enfileirado' || r.situacao === 'reagendado'
+            : desfecho.desfecho === 'enviado',
+        texto: descrever(r, desfecho),
+      })),
+    }
   } catch (erro) {
     log.error('falha no envio de teste', {
       canal,
@@ -146,10 +189,33 @@ export async function enviarTesteAction(
   }
 }
 
-function descrever(r: { situacao: string; motivo?: string }): string {
+function descrever(
+  r: { situacao: string; motivo?: string },
+  desfecho?: DesfechoEnvio | null,
+): string {
+  /*
+   * O que o provedor respondeu vale mais que o estado da fila. Dizer "na fila"
+   * para uma mensagem que o provedor já recusou é o tipo de mentira que faz
+   * alguém procurar o erro no lugar errado por meia hora.
+   */
+  if (desfecho) {
+    switch (desfecho.desfecho) {
+      case 'enviado':
+        return 'enviado — o provedor aceitou'
+      case 'falhou':
+        return `não saiu: ${desfecho.codigo}`
+      case 'cancelado':
+        return 'cancelado antes de sair'
+      case 'ja_processado':
+        return `já estava em ${desfecho.status}`
+      case 'cedo_demais':
+        return 'aguardando o horário de envio'
+    }
+  }
+
   switch (r.situacao) {
     case 'enfileirado':
-      return 'na fila — deve chegar em segundos'
+      return 'na fila — sai na próxima passagem do envio'
     case 'reagendado':
       return 'reagendado para a abertura da janela de silêncio'
     case 'pulado':
