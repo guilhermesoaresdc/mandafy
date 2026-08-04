@@ -240,7 +240,7 @@ export function EditorMensagem({
                   rows={12}
                   spellCheck
                   placeholder={
-                    'Oi {{nome|"tudo bem"}}! Seu PIX de {{valor_cents|moeda}} para a campanha\n*{{campanha}}* ainda está aberto.\n\nFinaliza aqui: {{link_pagamento}}'
+                    'Oi {{nome|"tudo bem"}}! O PIX de {{valor_cents|moeda}} da sua aposta\nem *{{palpite}}* ainda não caiu.\n\nO {{sorteio}} fecha às {{fecha_em|hora}}: {{link_pagamento}}'
                   }
                   className="w-full resize-y rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink outline-none placeholder:text-pending focus-visible:border-ink"
                 />

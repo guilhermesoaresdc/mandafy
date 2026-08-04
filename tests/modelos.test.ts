@@ -9,6 +9,8 @@ import { CHANNELS } from '@/db/schema/enums'
 import { linhasDoModelo, acharModelo } from '@/lib/messages/aplicar-modelo'
 import { MENSAGENS, type ModeloMensagem } from '@/lib/messages/modelos'
 import { resumoDosModelos } from '@/lib/messages/galeria'
+import { compilar } from '@/lib/messages/compile'
+import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 
 /**
  * Modelos de mensagem (§5.2, §6.1, §11.7).
@@ -44,7 +46,7 @@ const ADMIN = uid('e02')
  * quem tem motivo para ligá-lo. Nos demais, o SMS é decisão do PASSO do fluxo
  * (a "última chance" da cadência de PIX), não da mensagem.
  */
-const COM_VARIANTES = 'bicho_resultado_premiado'
+const COM_VARIANTES = 'bilhete_premiado'
 
 describe('§6.1 — o catálogo de modelos', () => {
   it('todo modelo tem chave, nome e corpo', () => {
@@ -52,6 +54,64 @@ describe('§6.1 — o catálogo de modelos', () => {
       expect(modelo.key, 'chave em formato de identificador').toMatch(/^[a-z][a-z0-9_]*$/)
       expect(modelo.name.length).toBeGreaterThan(1)
       expect(modelo.body.trim().length).toBeGreaterThan(0)
+    }
+  })
+
+  /*
+   * O catálogo é de uma BANCA, não de uma rifa. O vocabulário errado não
+   * quebra nada — só ensina: quem escreve mensagem nova copia o que vê nos
+   * modelos, e "campanha" e "seus números" não existem em jogo do bicho.
+   */
+  it('nenhum modelo usa vocabulário de rifa', () => {
+    const proibidas = /\b(campanha|rifa|bilhete|números da sorte|sorteio de prêmio)\b/i
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const texto = [modelo.body, modelo.subject ?? '', modelo.name].join(' ')
+      expect(proibidas.test(texto), `vocabulário de rifa em ${modelo.key}`).toBe(false)
+    }
+  })
+
+  /*
+   * Toda variável usada precisa existir no contato de exemplo — senão a prévia
+   * do editor mostra o nome da variável cru, e em envio real §6.3 é explícita:
+   * a notificação falha com `variavel_ausente` em vez de sair pela metade.
+   */
+  it('todo modelo compila com os dados de exemplo, sem variável ausente', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const r = compilar(modelo.body, {
+        canal: 'whatsapp',
+        dados: CONTATO_EXEMPLO,
+        previa: false,
+        semente: 7,
+      })
+      expect(r.ok, `${modelo.key}: ${r.ok ? '' : `${r.motivo} ${(r.variaveis ?? []).join(',')}`}`).toBe(true)
+    }
+  })
+
+  /*
+   * Quem tem variante de SMS é quem de fato manda SMS — e SMS se cobra por
+   * segmento. Um acento fora do GSM-7 derruba o limite de 160 para 70 e
+   * TRIPLICA a conta de uma mensagem que vai para a base inteira. Já
+   * aconteceu: a "última chance" saía em 3 segmentos, R$ 0,18 em vez de
+   * R$ 0,06, e nada na tela dizia isso.
+   */
+  it('SMS escrito à mão cabe em um segmento GSM-7 (§8.4)', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const variante = modelo.variantes?.sms
+      if (!variante?.body) continue
+
+      const r = compilar(variante.body, {
+        canal: 'sms',
+        dados: CONTATO_EXEMPLO,
+        previa: false,
+        semente: 7,
+        sms: { removerAcentuacao: Boolean(variante.stripAccents) },
+      })
+
+      expect(r.ok, `${modelo.key} não compilou`).toBe(true)
+      if (!r.ok || !r.sms) continue
+
+      expect(r.sms.codificacao, `${modelo.key} saiu em UCS-2`).toBe('GSM-7')
+      expect(r.sms.segmentos, `${modelo.key} usou mais de um segmento`).toBe(1)
     }
   })
 

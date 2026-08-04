@@ -75,9 +75,15 @@ export function chavesIguais(a: string, b: string): boolean {
 
 /** Modelos sugeridos ao criar um fluxo. */
 export const MODELOS_CHAVE = [
-  { modelo: 'order:{{external_id}}', rotulo: 'Por pedido', dica: 'O mais comum. Cancela quando aquele pedido é pago.' },
+  { modelo: 'order:{{external_id}}', rotulo: 'Por aposta', dica: 'O mais comum. Cancela quando aquela aposta é paga.' },
   { modelo: 'contact:{{contact_id}}', rotulo: 'Por contato', dica: 'Cancela tudo o que estava agendado para a pessoa.' },
-  { modelo: 'campaign:{{campanha}}', rotulo: 'Por campanha', dica: 'Cancela a campanha inteira de uma vez.' },
+  /*
+   * A extração, não "a campanha": numa banca o agrupamento natural é o
+   * sorteio, e quando ele fecha nada mais que o cite deve sair. O prefixo
+   * `campaign:` continua porque é dado gravado em `notifications.cancel_key`
+   * — trocá-lo deixaria de cancelar o que já está agendado.
+   */
+  { modelo: 'campaign:{{sorteio}}', rotulo: 'Por sorteio', dica: 'Cancela tudo daquela extração de uma vez.' },
 ] as const
 
 /** As variáveis que um modelo exige. O editor lista para conferência. */
