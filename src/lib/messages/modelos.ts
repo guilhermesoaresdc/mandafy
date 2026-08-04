@@ -4,7 +4,7 @@
  * Vive aqui, e não dentro do seed, porque tem DOIS consumidores: o seed, que o
  * grava na primeira subida, e a tela de nova mensagem, que o oferece como ponto
  * de partida. Enquanto ele morava no seed, a tela criava mensagem em branco e
- * as treze prontas ficavam invisíveis para quem estava começando — exatamente
+ * as prontas ficavam invisíveis para quem estava começando — exatamente
  * quando mais ajudariam.
  *
  * PURO DE PROPÓSITO
@@ -89,6 +89,27 @@ export const MENSAGENS = [
 Sua conta está pronta. É só escolher o bicho, a modalidade e o valor — dá para apostar em grupo, dezena, centena ou milhar.
 
 Boa sorte! 🍀`,
+    /*
+     * SMS escrito à mão, e não espelho do corpo principal.
+     *
+     * Um segmento GSM-7 são 160 caracteres; o 161º dobra a conta. Espelhando o
+     * texto do WhatsApp, quase todo modelo saía em 2 ou 3 segmentos — o
+     * canal mais caro do sistema custando o triplo, sem nada na tela acusando.
+     *
+     * As regras que mantêm isto em um segmento, e que valem para qualquer
+     * variante de SMS escrita depois: sem emoji (força UCS-2 e derruba o limite
+     * para 70), sem acento na FONTE — e não só confiando em `stripAccents`,
+     * para que desmarcar a caixa não estrague o texto —, e sem spintax, porque
+     * ramos de tamanhos diferentes fazem a contagem do editor deixar de valer
+     * para o envio.
+     *
+     * Medido com dados ruins de propósito (nome de 30 letras, R$ 9.876,54,
+     * nome de sorteio comprido e link de pagamento com uuid): todos continuam
+     * em um segmento. `tests/modelos.test.ts` prende isso.
+     */
+    variantes: {
+      sms: { body: `Ola {{nome|primeiro_nome|"tudo bem"}}! Sua conta esta pronta. Escolha o bicho, a modalidade e o valor. Boa sorte!`, stripAccents: true },
+    },
   },
 
   /*
@@ -115,6 +136,9 @@ Boa sorte! 🍀`,
 As apostas fecham às **{{fecha_em|hora}}**.
 
 Finaliza aqui: {{link_pagamento}}`,
+    variantes: {
+      sms: { body: `Oi {{primeiro_nome|"tudo bem"}}! O PIX de {{valor_cents|moeda}} nao caiu. As apostas fecham as {{fecha_em|hora}}: {{link_pagamento}}`, stripAccents: true },
+    },
   },
   {
     key: 'pix_lembrete_2',
@@ -126,6 +150,9 @@ Finaliza aqui: {{link_pagamento}}`,
 {Falta pouco|É rapidinho|Leva menos de um minuto}: {{valor_cents|moeda}} pelo PIX e a aposta entra no **{{sorteio}}**.
 
 {{link_pagamento}}`,
+    variantes: {
+      sms: { body: `{{primeiro_nome|"Tudo bem"}}, seu palpite segue reservado. Sao {{valor_cents|moeda}} pelo PIX: {{link_pagamento}}`, stripAccents: true },
+    },
   },
   {
     key: 'pix_ultima_chance',
@@ -147,9 +174,16 @@ Garante aqui: {{link_pagamento}}`,
        * R$ 0,06, três vezes o custo, numa mensagem que vai para todo mundo que
        * abandonou o PIX. Um acento basta para derrubar o limite de 160 para 70,
        * e o spintax pode escolher a alternativa mais longa sem avisar.
+       *
+       * O NOME DO SORTEIO SAIU DAQUI, e não por economia de palavras: ele é
+       * texto livre digitado pela banca. Com "Federal — Extração Especial de
+       * Natal" e um link de pagamento com uuid, esta mensagem passava de 160 e
+       * voltava a custar dois segmentos. O que segura a urgência é a HORA do
+       * fechamento, que tem tamanho fixo; quem recebe já sabe em que sorteio
+       * apostou.
        */
       sms: {
-        body: `{{primeiro_nome|"Ola"}}, o {{sorteio}} fecha as {{fecha_em|hora}} e sua aposta de {{valor_cents|moeda}} nao entrou. Garante: {{link_pagamento}}`,
+        body: `{{primeiro_nome|"Ola"}}, as apostas fecham as {{fecha_em|hora}} e a sua nao entrou. Garante agora: {{link_pagamento}}`,
         stripAccents: true,
       },
     },
@@ -169,6 +203,9 @@ Garante aqui: {{link_pagamento}}`,
 {Mas o próximo já está aberto|A próxima extração já aceita aposta}: mesmo palpite, mesmo valor, um toque.
 
 {{link_pagamento}}`,
+    variantes: {
+      sms: { body: `{{primeiro_nome|"Tudo bem"}}, o sorteio fechou e sua aposta nao entrou. A proxima ja aceita: {{link_pagamento}}`, stripAccents: true },
+    },
   },
 
   {
@@ -187,6 +224,9 @@ Valor: {{valor_cents|moeda}}
 Comprovante: {{external_id}}
 
 Boa sorte! 🍀`,
+    variantes: {
+      sms: { body: `Aposta confirmada, {{nome|primeiro_nome|"tudo bem"}}! {{valor_cents|moeda}} no {{sorteio}}, pagando {{retorno_cents|moeda}}. Comprovante {{external_id}}.`, stripAccents: true },
+    },
   },
 
   /**
@@ -233,9 +273,14 @@ Conferir o resultado completo: {{link_resultado}}`,
        * ganhou. Sem spintax (o sorteio de variante pode estourar o limite sem
        * avisar), sem emoji (força UCS-2 e derruba o limite para 70), sem
        * acento — e o link encurtado pelo próprio sistema.
+       *
+       * O grupo e o bicho entram entre parênteses, e não em frase: com um nome
+       * de sorteio comprido esta mensagem passava de 160 e custava dois
+       * segmentos. O resultado continua completo — sorteio, milhar, grupo,
+       * bicho e valor —, que é o que quem ganhou quer conferir.
        */
       sms: {
-        body: `Deu no seu bicho! {{sorteio}}, 1o premio {{milhar}} - grupo {{grupo}} {{bicho}}. Voce ganhou {{retorno_cents|moeda}}. Confira: {{link_resultado}}`,
+        body: `Deu no seu bicho! {{sorteio}}, 1o premio {{milhar}} ({{grupo}} {{bicho}}). Premio de {{retorno_cents|moeda}}: {{link_resultado}}`,
         stripAccents: true,
       },
 
@@ -292,6 +337,9 @@ Prêmio: **{{retorno_cents|moeda}}**, já creditado.`,
     body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de **{{valor_cents|moeda}}** está sendo processado.
 
 Assim que cair na conta a gente avisa.`,
+    variantes: {
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de {{valor_cents|moeda}} esta em processamento. A gente avisa assim que cair na conta.`, stripAccents: true },
+    },
   },
   {
     key: 'saque_concluido',
@@ -302,6 +350,9 @@ Assim que cair na conta a gente avisa.`,
     body: `💸 Saque de **{{valor_cents|moeda}}** concluído, {{nome|primeiro_nome|"tudo bem"}}.
 
 Já deve estar na sua conta.`,
+    variantes: {
+      sms: { body: `Saque de {{valor_cents|moeda}} concluido, {{nome|primeiro_nome|"tudo bem"}}. Ja deve estar na sua conta.`, stripAccents: true },
+    },
   },
 
   {
@@ -319,6 +370,9 @@ Já deve estar na sua conta.`,
 As extrações seguem saindo todo dia, e {seu saldo está aqui|sua conta continua ativa}: **{{saldo_cents|moeda}}**.
 
 Dá uma olhada nos resultados de hoje. 👀`,
+    variantes: {
+      sms: { body: `Oi {{nome|primeiro_nome|"tudo bem"}}! As extracoes seguem saindo todo dia, e seu saldo esta aqui: {{saldo_cents|moeda}}.`, stripAccents: true },
+    },
   },
   {
     key: 'campanha_encerrando',
@@ -328,6 +382,9 @@ Dá uma olhada nos resultados de hoje. 👀`,
     body: `⏰ {{nome|primeiro_nome|"Tudo bem"}}, o **{{sorteio}}** fecha às **{{fecha_em|hora}}**.
 
 {Ainda dá tempo|Corre que dá tempo|Última chance} de colocar seu palpite.`,
+    variantes: {
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, o {{sorteio}} fecha as {{fecha_em|hora}}. Ainda da tempo de colocar seu palpite.`, stripAccents: true },
+    },
   },
   {
     key: 'pos_compra_upsell',
@@ -342,6 +399,9 @@ Dá uma olhada nos resultados de hoje. 👀`,
     body: `{Oi|Olá} {{nome|primeiro_nome|"tudo bem"}}! {Já viu que|Olha que} a próxima extração está aberta.
 
 {Quer repetir o palpite|Que tal outro bicho}? Dá para apostar em grupo, dezena, centena ou milhar.`,
+    variantes: {
+      sms: { body: `Oi {{nome|primeiro_nome|"tudo bem"}}! A proxima extracao ja esta aberta. Mesmo palpite, mesmo valor, um toque.`, stripAccents: true },
+    },
   },
 ] as const satisfies readonly ModeloMensagem[]
 

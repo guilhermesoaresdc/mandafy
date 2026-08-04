@@ -25,25 +25,9 @@ import * as schema from './schema'
 import { usesTransactionPooler } from './index'
 import { generatePassword, hashPassword } from '@/lib/auth/password'
 import { seedFlows } from './seed-flows'
+import { semearFunilPadrao, semearRitmos } from './seed-org'
 
 const ORG_SLUG = 'mandafy'
-
-/** Perfis de randomização já configurados (§7.2). */
-const JITTER_PROFILES = [
-  { name: 'Instantâneo', mode: 'instantaneo' as const, min: 0, max: 0, isDefault: false },
-  { name: 'Seguro', mode: 'humano' as const, min: 8, max: 25, isDefault: true },
-  { name: 'Conservador', mode: 'humano' as const, min: 30, max: 90, isDefault: false },
-  { name: 'Disparo em massa', mode: 'faixa' as const, min: 45, max: 180, isDefault: false },
-]
-
-/** Etapas padrão do funil (§9.2). */
-const STAGES = [
-  { name: 'Novo', position: 0, color: '#8A94AD', probability: 10, isWon: false, isLost: false },
-  { name: 'Contatado', position: 1, color: '#2D9CDB', probability: 30, isWon: false, isLost: false },
-  { name: 'Negociando', position: 2, color: '#E8A13C', probability: 60, isWon: false, isLost: false },
-  { name: 'Ganho', position: 3, color: '#17B26A', probability: 100, isWon: true, isLost: false },
-  { name: 'Perdido', position: 4, color: '#E5484D', probability: 0, isWon: false, isLost: true },
-]
 
 function adminUrl(): string {
   const url = process.env.DATABASE_URL_ADMIN ?? process.env.DATABASE_URL
@@ -132,55 +116,17 @@ export async function seed(): Promise<ResultadoSeed> {
       if (!provided) senhaGerada = password
     }
 
-    // ── Perfis de ritmo de envio (§7.2) ──────────────────────────────────────
-    let createdProfiles = 0
-    for (const profile of JITTER_PROFILES) {
-      const inserted = await db
-        .insert(schema.jitterProfiles)
-        .values({
-          orgId: org.id,
-          name: profile.name,
-          mode: profile.mode,
-          minSeconds: profile.min,
-          maxSeconds: profile.max,
-          isDefault: profile.isDefault,
-        })
-        .onConflictDoNothing({
-          target: [schema.jitterProfiles.orgId, schema.jitterProfiles.name],
-        })
-        .returning({ id: schema.jitterProfiles.id })
-      createdProfiles += inserted.length
-    }
-
-    // ── Pipeline padrão (§9.2) ───────────────────────────────────────────────
-    let pipelineCriado = false
-    let [pipeline] = await db
-      .select()
-      .from(schema.pipelines)
-      .where(eq(schema.pipelines.orgId, org.id))
-      .limit(1)
-
-    if (!pipeline) {
-      ;[pipeline] = await db
-        .insert(schema.pipelines)
-        .values({ orgId: org.id, name: 'Funil de vendas', isDefault: true })
-        .returning()
-
-      if (!pipeline) throw new Error('Não foi possível criar o pipeline.')
-
-      await db.insert(schema.pipelineStages).values(
-        STAGES.map((s) => ({
-          pipelineId: pipeline!.id,
-          name: s.name,
-          position: s.position,
-          color: s.color,
-          probability: s.probability,
-          isWon: s.isWon,
-          isLost: s.isLost,
-        })),
-      )
-      pipelineCriado = true
-    }
+    /*
+     * Daqui para baixo é o mesmo que o botão da tela faz (src/db/seed-org.ts).
+     *
+     * As funções são compartilhadas de propósito: enquanto eram duas cópias, o
+     * botão do painel semeava por um caminho e o comando por outro, e o do
+     * painel semeava a organização errada. `db` aqui é o dono do banco e não um
+     * `Tx` do withTenant — o tipo aceita os dois, e nesta subida não há sessão
+     * de onde tirar contexto de tenant.
+     */
+    const createdProfiles = await semearRitmos(db, org.id)
+    const pipelineCriado = await semearFunilPadrao(db, org.id)
 
     // ── Mensagens e fluxos-modelo (§5.2, §6) ─────────────────────────────────
     const modelos = await seedFlows(db, org.id)

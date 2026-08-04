@@ -203,7 +203,12 @@ function descrever(
       case 'enviado':
         return 'enviado — o provedor aceitou'
       case 'falhou':
-        return `não saiu: ${desfecho.codigo}`
+        // A frase em português quando existe; o código só como último recurso.
+        // "não saiu: sem_credencial" manda a pessoa procurar um termo em inglês
+        // que não aparece em tela nenhuma do sistema.
+        return desfecho.detalhe
+          ? `não saiu — ${desfecho.detalhe}`
+          : `não saiu: ${desfecho.codigo}`
       case 'cancelado':
         return 'cancelado antes de sair'
       case 'ja_processado':

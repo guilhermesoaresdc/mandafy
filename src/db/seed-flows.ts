@@ -13,7 +13,7 @@
  * Ele foi para `@/lib/messages/modelos`, que não importa nada do banco e por
  * isso pode ser lido também pela tela de nova mensagem. Enquanto morava neste
  * arquivo, as mensagens prontas só existiam para quem rodou o seed: quem criava
- * uma mensagem pela interface começava do zero, com as treze prontas
+ * uma mensagem pela interface começava do zero, com as prontas
  * invisíveis. Aqui ficou o que é de fato do seed — quais fluxos existem e como
  * o catálogo vira linha no banco.
  */

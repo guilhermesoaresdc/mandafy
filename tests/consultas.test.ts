@@ -7,6 +7,7 @@ import type { Tx } from '@/db'
 import { listarPlataformas } from '@/db/queries/sources'
 import { buscarMensagem, chaveEmUso, listarMensagens } from '@/db/queries/messages'
 import { buscarFluxo, listarFluxos } from '@/db/queries/flows'
+import { eventosPorTipo, resumoNoAr } from '@/db/queries/no-ar'
 
 /**
  * Consultas das telas, EXECUTADAS contra um Postgres de verdade.
@@ -274,6 +275,77 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
       // +5min e depois +20min viram "+5 min" e "+25 min" desde o gatilho.
       expect(completo?.passos.map((p) => p.offsetLabel)).toEqual(['+5 min', '+25 min'])
       expect(completo?.passos.map((p) => p.delaySeconds)).toEqual([300, 1200])
+    })
+
+    /*
+     * "O que está ativo e rodando?" — a pergunta que ninguém conseguia responder.
+     *
+     * As duas consultas cruzam três tabelas particionadas ou agregadas, e são
+     * exatamente o tipo que passa no `tsc` e o Postgres recusa. Pior: sob RLS
+     * elas não falham, devolvem ZERO LINHA — e a tela diria "nada acontecendo"
+     * num sistema saudável.
+     */
+    describe('o que está no ar (§10.3)', () => {
+      beforeEach(async () => {
+        await admin`DELETE FROM notification_daily_stats WHERE org_id = ${ORG}`
+        await admin`DELETE FROM events WHERE org_id = ${ORG}`
+
+        // O gatilho do fluxo chegando de verdade.
+        await admin`INSERT INTO events (org_id, source_id, type, external_id, occurred_at) VALUES
+          (${ORG}, ${ORIGEM_A}, 'order.created', 'P-1', now()),
+          (${ORG}, ${ORIGEM_A}, 'order.created', 'P-2', now()),
+          (${ORG}, ${ORIGEM_A}, 'order.paid',    'P-1', now())`
+
+        await admin`INSERT INTO notification_daily_stats (org_id, day, channel, status, flow_id, total)
+          VALUES (${ORG}, current_date, 'whatsapp', 'sent', ${FLUXO}, 7)`
+      })
+
+      it('conta os envios do fluxo e os eventos do gatilho', async () => {
+        const resumo = await comoUsuario(resumoNoAr)
+        const fluxo = resumo.fluxos.find((f) => f.id === FLUXO)
+
+        // Do agregado, nunca de COUNT(*) em notifications (§13.2).
+        expect(fluxo?.envios).toBe(7)
+        expect(fluxo?.gatilhos).toBe(2)
+      })
+
+      it('acusa o evento que chega e nenhum fluxo escuta', async () => {
+        // `order.paid` chega e ninguém dispara com ele — é o caso que responde
+        // "configurei tudo e não sai nada". `order.created` tem o fluxo da
+        // fixture escutando, e por isso NÃO pode aparecer aqui.
+        const resumo = await comoUsuario(resumoNoAr)
+        const tipos = resumo.semOuvinte.map((e) => e.type)
+
+        expect(tipos).toContain('order.paid')
+        expect(tipos).not.toContain('order.created')
+        expect(resumo.ligados).toBe(1)
+      })
+
+      it('pausar o fluxo faz o gatilho dele virar evento sem ouvinte', async () => {
+        // Fluxo pausado NÃO conta como ouvinte, de propósito: "o evento está
+        // chegando e o fluxo está desligado" é justamente o que a pessoa
+        // precisa enxergar, não o que deve tranquilizá-la.
+        await admin`UPDATE flows SET active = false WHERE id = ${FLUXO}`
+        try {
+          const resumo = await comoUsuario(resumoNoAr)
+          expect(resumo.semOuvinte.map((e) => e.type)).toContain('order.created')
+          expect(resumo.ligados).toBe(0)
+        } finally {
+          await admin`UPDATE flows SET active = true WHERE id = ${FLUXO}`
+        }
+      })
+
+      it('os eventos da plataforma vêm agrupados por tipo, com o último horário', async () => {
+        const tipos = await comoUsuario((tx) => eventosPorTipo(tx, ORIGEM_A))
+
+        expect(tipos.find((t) => t.type === 'order.created')?.total).toBe(2)
+        expect(tipos.find((t) => t.type === 'order.paid')?.total).toBe(1)
+        expect(tipos[0]?.ultimo).toBeInstanceOf(Date)
+      })
+
+      it('a plataforma sem eventos devolve lista vazia, não erro', async () => {
+        expect(await comoUsuario((tx) => eventosPorTipo(tx, ORIGEM_B))).toEqual([])
+      })
     })
 
     it('fluxo de outra organização não é encontrado', async () => {

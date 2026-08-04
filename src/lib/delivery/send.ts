@@ -33,7 +33,22 @@ export type DesfechoEnvio =
   | { desfecho: 'ja_processado'; status: string }
   /** Chegou antes da hora: não sai, e quem chamou reagenda para `quando`. */
   | { desfecho: 'cedo_demais'; quando: Date }
-  | { desfecho: 'falhou'; codigo: string; reenviavel: boolean; esperarSegundos?: number }
+  /**
+   * `detalhe` é a frase em português que diz O QUE FAZER.
+   *
+   * O sistema já a calculava — "falta a chave do provedor de SMS", "o canal
+   * está desligado nas configurações" — gravava em `error_message` e a jogava
+   * fora antes de responder. Quem clicava em "enviar teste" lia
+   * `não saiu: sem_credencial`: código em inglês, sem pista do que corrigir, e
+   * sem outro lugar para descobrir por quem não usa terminal.
+   */
+  | {
+      desfecho: 'falhou'
+      codigo: string
+      reenviavel: boolean
+      esperarSegundos?: number
+      detalhe?: string
+    }
 
 /**
  * Folga entre o relógio do app e o do banco.
@@ -153,8 +168,9 @@ export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvi
   const { linha, contato, canal } = preparado
 
   if (!canal.alvo) {
-    await marcarFalha(ctx, dados, criadoEm, 'sem_credencial', canal.falta ?? 'canal sem configuração', false)
-    return { desfecho: 'falhou', codigo: 'sem_credencial', reenviavel: false }
+    const falta = canal.falta ?? 'canal sem configuração'
+    await marcarFalha(ctx, dados, criadoEm, 'sem_credencial', falta, false)
+    return { desfecho: 'falhou', codigo: 'sem_credencial', reenviavel: false, detalhe: falta }
   }
 
   const para =
