@@ -11,6 +11,8 @@ import { CHANNELS, MESSAGE_CATEGORIES, type Channel } from '@/db/schema/enums'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { createLogger } from '@/lib/logger'
 import { assertCan } from '@/lib/rbac'
+import { acharModelo, linhasDoModelo } from '@/lib/messages/aplicar-modelo'
+import { MENSAGENS } from '@/lib/messages/modelos'
 import { editarVariante, propagar, ressincronizar } from '@/lib/messages/sync'
 
 /**
@@ -42,6 +44,14 @@ function chaveSugerida(nome: string): string {
 const criarSchema = z.object({
   nome: z.string().trim().min(2, 'Dê um nome à mensagem.').max(80),
   categoria: z.enum(MESSAGE_CATEGORIES),
+  /**
+   * A chave de um modelo do catálogo, ou nada para começar em branco.
+   *
+   * Sem validar contra a lista aqui: `acharModelo` devolve nulo para o que não
+   * existe, e o desfecho de uma chave inventada é "criou em branco" — não vale
+   * uma mensagem de erro na tela.
+   */
+  modelo: z.string().trim().optional(),
 })
 
 export async function criarMensagemAction(
@@ -54,23 +64,47 @@ export async function criarMensagemAction(
   const parsed = criarSchema.safeParse({
     nome: formData.get('nome'),
     categoria: formData.get('categoria') ?? 'relacionamento',
+    modelo: formData.get('modelo') ?? undefined,
   })
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? 'Não foi possível criar.' }
   }
 
+  const modelo = acharModelo(MENSAGENS, parsed.data.modelo)
+
   let id: string
   try {
     id = await withTenant(tenantOf(user), async (tx) => {
-      // Chave única por organização: se `boas_vindas` já existe, vira
-      // `boas_vindas_2`. Pedir outra chave à pessoa seria burocracia por nada.
-      const base = chaveSugerida(parsed.data.nome)
+      /*
+       * Chave única por organização: se `boas_vindas` já existe, vira
+       * `boas_vindas_2`. Pedir outra chave à pessoa seria burocracia por nada.
+       *
+       * Com modelo, a base é a chave DELE e não o nome digitado. A chave é o
+       * que a API pública usa (§3.4) e o que a documentação cita pelo nome:
+       * quem escolhe "Lembrete de PIX — 5 minutos" espera `pix_lembrete_1`,
+       * mesmo tendo renomeado a mensagem antes de criar. O nome é rótulo; a
+       * chave é contrato, e continua editável na tela da mensagem.
+       */
+      const base = modelo ? modelo.key : chaveSugerida(parsed.data.nome)
       let key = base
       for (let n = 2; await chaveEmUso(tx, user.orgId, key); n += 1) key = `${base}_${n}`
 
+      /*
+       * Do modelo saem corpo, variantes e canais pela MESMA função que o seed
+       * usa (`linhasDoModelo`). O nome e a categoria vêm do formulário: são os
+       * dois campos que a pessoa acabou de ver e pode ter mudado.
+       */
+      const linhas = modelo ? linhasDoModelo(modelo, key) : null
+
       const [criada] = await tx
         .insert(messages)
-        .values({ orgId: user.orgId, key, name: parsed.data.nome, category: parsed.data.categoria })
+        .values({
+          orgId: user.orgId,
+          ...(linhas ? linhas.mensagem : {}),
+          key,
+          name: parsed.data.nome,
+          category: parsed.data.categoria,
+        })
         .returning({ id: messages.id })
 
       if (!criada) throw new Error('insert sem retorno')
@@ -78,11 +112,13 @@ export async function criarMensagemAction(
       // As quatro variantes nascem juntas e sincronizadas (§6.1) — assim a
       // mensagem já pode sair por qualquer canal sem passo extra.
       await tx.insert(messageVariants).values(
-        CHANNELS.map((channel) => ({
-          messageId: criada.id,
-          channel,
-          parseMode: channel === 'telegram' ? ('HTML' as const) : null,
-        })),
+        linhas
+          ? linhas.variantes.map((variante) => ({ messageId: criada.id, ...variante }))
+          : CHANNELS.map((channel) => ({
+              messageId: criada.id,
+              channel,
+              parseMode: channel === 'telegram' ? ('HTML' as const) : null,
+            })),
       )
 
       return criada.id

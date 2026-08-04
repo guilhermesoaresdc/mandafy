@@ -6,6 +6,7 @@ import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, ChannelPad, EmptyState } from '@/components/ui'
 import { CHANNELS, MESSAGE_CATEGORY_LABELS } from '@/db/schema/enums'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
+import { resumoDosModelos } from '@/lib/messages/galeria'
 import { NovaMensagem } from './nova-mensagem'
 
 export const metadata: Metadata = { title: 'Mensagens · Mandafy' }
@@ -18,16 +19,23 @@ export default async function MensagensPage() {
 
   const lista = await withTenant(tenantOf(user), listarMensagens)
 
+  /*
+   * A galeria é montada aqui, no servidor, e desce como texto já compilado. O
+   * corpo inteiro dos treze modelos não precisa atravessar a rede para caber em
+   * duas linhas de cartão (§13.1).
+   */
+  const modelos = resumoDosModelos()
+
   return (
     <SessionFrame
       title="Mensagens"
       description="Uma mensagem, quatro saídas. Você escreve uma vez; cada canal recebe sua versão."
-      actions={<NovaMensagem />}
+      actions={<NovaMensagem modelos={modelos} />}
     >
       {lista.length === 0 ? (
         <EmptyState
           title="Nenhuma mensagem ainda"
-          description="Comece pela de boas-vindas — é a mais simples e já dá para ver as quatro versões lado a lado."
+          description="Clique em “Nova mensagem”: há treze modelos prontos para escolher, do lembrete de PIX ao aviso de prêmio. Dá para editar tudo depois."
         />
       ) : (
         <div className="flex max-w-3xl flex-col gap-2">

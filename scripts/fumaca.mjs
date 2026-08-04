@@ -708,6 +708,19 @@ try {
     const lista = await (await get('/mensagens')).text()
     checar('lista mostra a mensagem criada', lista.includes('fumaca_teste'))
 
+    /*
+     * A galeria de modelos só aparece depois de clicar em "Nova mensagem", mas
+     * os cartões descem na carga da página como propriedade do componente. O
+     * que se procura aqui é o nome do contato de exemplo: ele só existe se
+     * `resumoDosModelos()` tiver compilado os corpos no servidor. Sem esta
+     * verificação, uma galeria vazia passaria despercebida — foi assim que os
+     * treze modelos ficaram invisíveis por semanas.
+     */
+    checar(
+      'a galeria de modelos desce com a página',
+      lista.includes('pix_lembrete_1') && lista.includes('Maria'),
+    )
+
     // Um fluxo-modelo do seed, com a tela de detalhe.
     const [fluxo] = await db`SELECT id FROM flows WHERE org_id = ${usuario.org_id} LIMIT 1`
     if (fluxo) {
