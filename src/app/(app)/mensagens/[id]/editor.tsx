@@ -151,6 +151,43 @@ export function EditorMensagem({
 
   const desconhecidas = usadas.filter((v) => !(v in CONTATO_EXEMPLO))
   const emailVariante = porCanal.get('email')
+
+  /**
+   * O cabeçalho e o formulário de ajuste de um canal.
+   *
+   * O selo "customizado" fica visível SEM abrir: é a informação que muda o
+   * significado da prévia — uma versão customizada não acompanha mais o texto
+   * comum, e quem não sabe disso edita o texto principal e não entende por que
+   * aquele canal não mudou.
+   */
+  function slotsDoCanal(canal: Channel) {
+    const variante = porCanal.get(canal)
+    const aberto = canalAberto === canal
+
+    return {
+      acoes: (
+        <>
+          {variante && !variante.synced ? <Badge tone="pending">customizado</Badge> : null}
+          <button
+            type="button"
+            onClick={() => setCanalAberto(aberto ? null : canal)}
+            aria-expanded={aberto}
+            className="rounded-md px-1.5 py-0.5 text-2xs text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+          >
+            {aberto ? 'Fechar' : 'Ajustar'}
+          </button>
+        </>
+      ),
+      abaixo: aberto ? (
+        <VarianteForm
+          mensagemId={mensagem.id}
+          corpoPrincipal={corpo}
+          variante={variante}
+          canal={canal}
+        />
+      ) : null,
+    }
+  }
   const alterado =
     corpo !== mensagem.body ||
     nome !== mensagem.name ||
@@ -247,9 +284,24 @@ export function EditorMensagem({
             </label>
           </CardBody>
         </Card>
+      </form>
 
-        {/* ── Corpo + prévia ── */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      {/*
+        A prévia ficou FORA do formulário, e precisa ficar.
+
+        O ajuste de cada canal abre dentro da prévia e tem o próprio `<form>`.
+        Formulário dentro de formulário é HTML inválido: o navegador não define
+        qual dos dois um botão de submit aciona, e o risco concreto era "Salvar
+        esta versão" disparar o salvamento da mensagem inteira — gravando o
+        texto comum e descartando o ajuste que a pessoa acabou de escrever.
+
+        Nada se perde: todos os campos que submetem estão no cartão acima, e o
+        botão de salvar se liga ao formulário pelo `id` (atributo `form`), que
+        é para isso que ele existe.
+      */}
+
+      {/* ── Corpo + prévia ── */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
           <div className="flex flex-col gap-3">
             <Card>
               <CardHeader>
@@ -388,20 +440,33 @@ export function EditorMensagem({
               <span className="text-2xs text-pending">com um contato de exemplo</span>
             </CardHeader>
             <CardBody className="grid gap-4 sm:grid-cols-2">
-              <PreviaWhatsapp compilacao={compilacoes.whatsapp} />
-              <PreviaTelegram compilacao={compilacoes.telegram} />
+              {/*
+                Cada prévia vem com o próprio botão de ajuste. Editar só o
+                assunto do e-mail, ou só o texto do SMS, sempre foi possível
+                (§6.1) — mas o controle morava num cartão no fim da página, e
+                quem via o problema na prévia não tinha como suspeitar disso.
+              */}
+              <PreviaWhatsapp
+                compilacao={compilacoes.whatsapp}
+                {...slotsDoCanal('whatsapp')}
+              />
+              <PreviaTelegram
+                compilacao={compilacoes.telegram}
+                {...slotsDoCanal('telegram')}
+              />
               <PreviaEmail
                 compilacao={compilacoes.email}
                 assunto={emailVariante?.subject ?? nome}
                 preheader={emailVariante?.preheader ?? ''}
+                {...slotsDoCanal('email')}
               />
-              <PreviaSms compilacao={compilacoes.sms} />
+              <PreviaSms compilacao={compilacoes.sms} {...slotsDoCanal('sms')} />
             </CardBody>
           </Card>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Button type="submit" disabled={salvando || !alterado}>
+      <div className="flex items-center gap-3">
+          <Button type="submit" form={`${corpoId}-form`} disabled={salvando || !alterado}>
             {salvando ? 'Salvando…' : 'Salvar mensagem'}
           </Button>
           {estado.error ? (
@@ -413,8 +478,7 @@ export function EditorMensagem({
           {alterado ? (
             <span className="text-2xs text-pending">⌘/Ctrl + Enter salva</span>
           ) : null}
-        </div>
-      </form>
+      </div>
 
       <EnviarTeste messageId={mensagem.id} />
 
@@ -441,41 +505,11 @@ export function EditorMensagem({
             })}
           </div>
 
-          <Separator />
-
-          <div className="flex flex-wrap gap-1">
-            {CHANNELS.map((canal) => {
-              const variante = porCanal.get(canal)
-              return (
-                <button
-                  key={canal}
-                  type="button"
-                  onClick={() => setCanalAberto(canalAberto === canal ? null : canal)}
-                  aria-expanded={canalAberto === canal}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-2xs',
-                    canalAberto === canal ? 'border-ink text-ink' : 'border-line text-ink-2',
-                  )}
-                >
-                  {canal}
-                  {variante && !variante.synced ? <Badge tone="pending">customizado</Badge> : null}
-                </button>
-              )
-            })}
-          </div>
-
-          {canalAberto ? (
-            <VarianteForm
-              mensagemId={mensagem.id}
-              corpoPrincipal={corpo}
-              variante={porCanal.get(canalAberto)}
-              canal={canalAberto}
-            />
-          ) : (
-            <p className="text-2xs text-pending">
-              Todas as versões seguem o texto principal. Abra um canal para ajustar só ele.
-            </p>
-          )}
+          {/*
+            Só os pads aqui. O ajuste de cada versão mora na prévia daquele
+            canal — havia duas portas para a mesma coisa, e a de baixo era a
+            que ninguém achava.
+          */}
         </CardBody>
       </Card>
 
@@ -518,7 +552,7 @@ function VarianteForm({
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-line p-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <Badge tone={variante.synced ? 'ok' : 'pending'}>
           {variante.synced ? 'sincronizado' : 'customizado'}
         </Badge>
@@ -543,8 +577,13 @@ function VarianteForm({
         <input type="hidden" name="id" value={mensagemId} />
         <input type="hidden" name="canal" value={canal} />
 
+        {/*
+          Uma coluna: o formulário agora abre DENTRO da prévia, que tem metade
+          da largura do painel. Assunto e pré-cabeçalho lado a lado ali viram
+          duas caixas onde não cabe um assunto de e-mail.
+        */}
         {canal === 'email' ? (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="flex flex-col gap-3">
             <Field label="Assunto" htmlFor={assuntoId}>
               <Input
                 id={assuntoId}
@@ -570,7 +609,7 @@ function VarianteForm({
         ) : null}
 
         {canal === 'sms' ? (
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-col gap-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-2xs text-ink-2">
               <input
                 type="checkbox"
@@ -613,7 +652,7 @@ function VarianteForm({
             name="corpo"
             value={texto}
             onChange={(e) => setTexto(e.target.value)}
-            rows={6}
+            rows={8}
             className="w-full resize-y rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink outline-none focus-visible:border-ink"
           />
         </div>
