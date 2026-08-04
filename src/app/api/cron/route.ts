@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import { NextResponse, type NextRequest } from 'next/server'
 import { db } from '@/db'
 import { serverEnv } from '@/env'
+import { classifyDbError } from '@/lib/db-errors'
 import { tickDeEnvio } from '@/lib/delivery/tick'
 import { createLogger } from '@/lib/logger'
 import {
@@ -171,18 +172,30 @@ async function bater(): Promise<NextResponse> {
   try {
     return await baterMesmo()
   } catch (erro) {
+    /*
+     * A CAUSA, não só a mensagem de fora.
+     *
+     * O Drizzle embrulha o erro do Postgres: `message` vira "Failed query: …
+     * params: …" e o motivo verdadeiro — "permission denied for table x",
+     * "relation does not exist" — fica em `cause`. Reportar só a mensagem
+     * externa mostra a consulta que falhou e esconde POR QUE falhou, que é a
+     * única parte acionável. Custou uma rodada inteira de diagnóstico.
+     *
+     * `classifyDbError` percorre a cadeia até a raiz e já remove credenciais.
+     */
+    const { hint, detail, code } = classifyDbError(erro)
     const mensagem = erro instanceof Error ? erro.message : String(erro)
-    log.error('batimento estourou', { reason: mensagem.slice(0, 200) })
+
+    log.error('batimento estourou', { code, reason: (detail ?? mensagem).slice(0, 200) })
 
     return NextResponse.json(
       {
         ok: false,
         error: 'batimento_falhou',
-        detail: mensagem.slice(0, 500),
-        hint:
-          'Se a mensagem citar uma tabela ou coluna que não existe, falta aplicar as ' +
-          'alterações do banco: abra /api/health e veja o campo "estrutura", ou ' +
-          'Configurações → Sistema.',
+        causa: detail ?? mensagem.slice(0, 300),
+        consulta: mensagem.slice(0, 300),
+        ...(code ? { code } : {}),
+        hint,
       },
       { status: 500 },
     )
@@ -205,16 +218,49 @@ async function baterMesmo(): Promise<NextResponse> {
   try {
     const agora = new Date()
 
-    // A manutenção vem antes do envio: é ela que cria a partição do dia e zera
-    // o teto diário. Enviar antes disso gastaria o teto de ontem.
+    /*
+     * A manutenção vem antes do envio — é ela que cria a partição do dia e zera
+     * o teto diário — mas NÃO pode impedi-lo.
+     *
+     * Antes ela rodava solta na mesma tentativa, e qualquer falha ali derrubava
+     * a invocação inteira: nenhuma mensagem saía porque uma escrita de
+     * contabilidade não deu certo. É a prioridade invertida — o propósito deste
+     * endpoint é entregar mensagem; saber que horas a manutenção rodou é
+     * secundário.
+     *
+     * A falha vai na resposta, para não sumir, e o envio segue.
+     */
     const manutencao: Record<string, unknown> = {}
 
-    if (await precisaZerar(agora)) {
-      manutencao.zerados = await zerarContadoresDiarios()
-    }
+    /*
+     * Cada tarefa numa tentativa PRÓPRIA, e a ordem importa mais do que parece.
+     *
+     * Com as duas no mesmo bloco, uma falha na zeragem pulava a manutenção
+     * horária — e foi assim que o sistema ficou preso num laço circular: a
+     * zeragem falhava por falta de permissão em `system_state`, e quem
+     * reconcede permissão é `mandafy_maintain_partitions()`, que roda DENTRO da
+     * manutenção horária. A rotina que consertava só rodava depois da que
+     * quebrava, então nunca rodava.
+     *
+     * Separadas, a horária roda mesmo com a zeragem quebrada, reconcede, e o
+     * batimento seguinte encontra tudo no lugar. O sistema se destrava sozinho.
+     */
+    const tarefas: [string, () => Promise<unknown>][] = [
+      ['horaria', async () => ((await precisaManutencao(agora)) ? manutencaoHoraria() : undefined)],
+      ['zerados', async () => ((await precisaZerar(agora)) ? zerarContadoresDiarios() : undefined)],
+    ]
 
-    if (await precisaManutencao(agora)) {
-      manutencao.horaria = await manutencaoHoraria()
+    for (const [nome, executar] of tarefas) {
+      try {
+        const resultado = await executar()
+        if (resultado !== undefined) manutencao[nome] = resultado
+      } catch (erro) {
+        const { detail, code } = classifyDbError(erro)
+        manutencao[`${nome}_falhou`] =
+          detail ?? (erro instanceof Error ? erro.message.slice(0, 300) : 'erro')
+        if (code) manutencao[`${nome}_code`] = code
+        log.error('tarefa de manutenção falhou; o envio continua', { tarefa: nome, code })
+      }
     }
 
     const orcamento = maxDuration * 1000 - (Date.now() - inicio) - RESERVA_MS
