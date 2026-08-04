@@ -38,7 +38,26 @@ function Moldura({
   )
 }
 
+/**
+ * O que a moldura mostra quando a compilação não deu certo.
+ *
+ * CORPO VAZIO NÃO É ERRO
+ *
+ * Mensagem recém-criada em branco tem corpo vazio, e a compilação falha nos
+ * quatro canais. Pintar isso de vermelho quatro vezes é dizer "você errou" a
+ * quem ainda não fez nada — a primeira coisa que a pessoa vê ao criar a
+ * primeira mensagem da vida. Aqui vira convite, na cor de texto secundário
+ * (§11.7): nomeie pelo que a pessoa controla, e não pelo que o compilador
+ * encontrou.
+ *
+ * Variável sem valor e erro de sintaxe continuam vermelhos — nesses dois a
+ * pessoa escreveu algo que não vai sair, e precisa saber agora.
+ */
 function Falha({ compilacao }: { compilacao: Extract<Compilacao, { ok: false }> }) {
+  if (compilacao.motivo === 'corpo_vazio') {
+    return <p className="text-2xs text-pending">Escreva ao lado e a prévia aparece aqui.</p>
+  }
+
   return (
     <p className="text-2xs text-fail">
       {compilacao.motivo === 'variavel_ausente'
