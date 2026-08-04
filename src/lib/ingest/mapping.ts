@@ -204,21 +204,45 @@ export const MAPEAMENTO_SUGERIDO: SourceMappingInput = {
   fields: {
     external_id: '$.data.order.id',
     valor_cents: { path: '$.data.order.amount', transform: 'reais_para_centavos' },
-    quantidade: { path: '$.data.order.tickets', transform: 'inteiro' },
-    campanha: '$.data.campaign.title',
+    retorno_cents: { path: '$.data.order.payout', transform: 'reais_para_centavos' },
+    sorteio: '$.data.draw.name',
+    fecha_em: '$.data.draw.closes_at',
+    modalidade: '$.data.bet.type',
+    palpite: '$.data.bet.pick',
     pix_copia_cola: '$.data.order.pix_code',
     link_pagamento: '$.data.order.checkout_url',
-    premio: '$.data.campaign.prize',
   },
 }
 
-/** Campos canônicos oferecidos na tela de mapeamento, com rótulo em pt-BR. */
+/**
+ * Campos canônicos oferecidos na tela de mapeamento, com rótulo em pt-BR.
+ *
+ * ESTA LISTA E O CATÁLOGO DE MENSAGENS ANDAM JUNTOS.
+ *
+ * Cada `{{variavel}}` que uma mensagem escreve precisa ter de onde vir, e é
+ * daqui que ela vem. Enquanto a lista falava de rifa — "quantidade de números",
+ * "campanha", "prêmio" — e as mensagens já falavam de banca, conectar a
+ * plataforma produzia mensagens sem `{{sorteio}}`, sem `{{palpite}}` e sem
+ * `{{fecha_em}}`: nada quebrava na tela, e os envios morriam com
+ * `variavel_ausente` depois. `tests/mapeamento.test.ts` prende as duas pontas.
+ *
+ * `nome`, `telefone` e `email` NÃO entram aqui: eles vêm da identidade do
+ * contato, mapeada no bloco `contact`, e o enfileiramento os injeta nas
+ * variáveis a cada envio.
+ */
 export const CAMPOS_CANONICOS = [
-  { chave: 'external_id', rotulo: 'Número do pedido', dica: 'Amarra o cancelamento ao pagamento' },
-  { chave: 'valor_cents', rotulo: 'Valor', dica: 'Usado em {{valor|moeda}}' },
-  { chave: 'quantidade', rotulo: 'Quantidade de números' },
-  { chave: 'campanha', rotulo: 'Nome da campanha' },
+  { chave: 'external_id', rotulo: 'Número da aposta', dica: 'Amarra o cancelamento ao pagamento' },
+  { chave: 'valor_cents', rotulo: 'Valor apostado', dica: 'Usado em {{valor_cents|moeda}}' },
+  { chave: 'retorno_cents', rotulo: 'Quanto paga se ganhar' },
+  { chave: 'sorteio', rotulo: 'Sorteio', dica: 'PTV 18h, Federal, Corujinha…' },
+  { chave: 'fecha_em', rotulo: 'Hora que fecha', dica: 'A urgência real: depois disso não entra' },
+  { chave: 'modalidade', rotulo: 'Modalidade', dica: 'Grupo, dezena, centena, milhar' },
+  { chave: 'palpite', rotulo: 'Palpite' },
+  { chave: 'saldo_cents', rotulo: 'Saldo na conta' },
+  { chave: 'milhar', rotulo: 'Milhar sorteada', dica: 'Texto, para não perder o zero à esquerda' },
+  { chave: 'grupo', rotulo: 'Grupo' },
+  { chave: 'bicho', rotulo: 'Bicho' },
   { chave: 'pix_copia_cola', rotulo: 'PIX copia e cola' },
   { chave: 'link_pagamento', rotulo: 'Link de pagamento' },
-  { chave: 'premio', rotulo: 'Prêmio' },
+  { chave: 'link_resultado', rotulo: 'Link do resultado' },
 ] as const
