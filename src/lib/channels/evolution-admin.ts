@@ -30,8 +30,28 @@ export type ServidorEvolution = {
   apikeyGlobal: string
 }
 
+/**
+ * Normaliza o endereço da Evolution para a RAIZ da API.
+ *
+ * O endereço que a pessoa tem à mão é o do Manager — é o que está na barra do
+ * navegador quando ela olha as instâncias, e termina em `/manager`. Colado
+ * assim, toda chamada virava `/manager/instance/create`, que devolve 404: o
+ * canal ficava configurado, o QR não aparecia, e nada na tela dizia por quê.
+ *
+ * Tirar o sufixo aqui e não só na hora de salvar conserta também quem já
+ * gravou o endereço errado, sem precisar que a pessoa descubra e reedite.
+ *
+ * `/manager` é o único caminho removido de propósito: é a única página que a
+ * Evolution serve para gente ver. Qualquer outro sufixo pode ser um prefixo
+ * legítimo de proxy reverso, e comer isso quebraria quem publica a Evolution
+ * sob um caminho.
+ */
+export function normalizarUrlEvolution(url: string): string {
+  return url.trim().replace(/\/+$/, '').replace(/\/manager$/i, '')
+}
+
 function base(url: string): string {
-  return url.replace(/\/+$/, '')
+  return normalizarUrlEvolution(url)
 }
 
 export type FalhaAdmin = {
@@ -178,6 +198,25 @@ export type InstanciaCriada = {
  * e o `CONNECTION_UPDATE` desse momento se perderia. A tela ficaria esperando
  * um evento que nunca chega.
  */
+/**
+ * Confere se o endereço e a chave falam com uma Evolution de verdade.
+ *
+ * Existe porque a alternativa é o pior modo de falha da tela: o canal aparece
+ * configurado, o botão do QR não faz nada, e nenhuma mensagem explica se o
+ * endereço está errado, se a chave foi recusada ou se o servidor está fora.
+ * Os três se consertam em lugares diferentes.
+ *
+ * `/instance/fetchInstances` é a chamada mais barata que exige autenticação:
+ * responde 401 com chave errada e 404 se o caminho não for a raiz da API —
+ * que é exatamente o caso de quem colou o endereço do Manager.
+ */
+export async function verificarServidor(servidor: ServidorEvolution): Promise<
+  { ok: true } | FalhaAdmin
+> {
+  const resultado = await chamar(servidor, 'GET', '/instance/fetchInstances')
+  return resultado.ok ? { ok: true } : resultado
+}
+
 export async function criarInstancia(
   servidor: ServidorEvolution,
   opcoes: { instanceName: string; webhookUrl: string },

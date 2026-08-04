@@ -21,6 +21,8 @@ import {
   estadoDaConexao,
   gerarTokenWebhook,
   nomeDeInstancia,
+  normalizarUrlEvolution,
+  verificarServidor,
   obterQr,
   traduzirEstado,
 } from '@/lib/channels/evolution-admin'
@@ -37,7 +39,16 @@ import { limitesDoEstagio } from '@/lib/delivery/warmup'
 
 const log = createLogger('canais')
 
-export type CanalState = { erro?: string; ok?: boolean }
+export type CanalState = {
+  erro?: string
+  ok?: boolean
+  /**
+   * Salvou, mas o endereço não respondeu. Aviso e não erro: a Evolution pode
+   * estar fora do ar num momento em que a credencial está certa, e recusar a
+   * gravação nesse caso obrigaria a redigitar tudo depois.
+   */
+  aviso?: string
+}
 
 const canalSchema = z.object({
   canal: z.enum(CHANNELS),
@@ -113,7 +124,9 @@ export async function salvarCanalAction(
         // O WhatsApp lê `apikey`/`url` minúsculos (ver resolverCanal).
         ...(apiKey && canal === 'whatsapp' ? { apikey: apiKey } : {}),
         ...(remetente ? { remetente } : {}),
-        ...(url ? { url: url.replace(/\/+$/, '') } : {}),
+        // Tira `/manager` do fim: é o endereço que a pessoa tem à mão, e sem
+        // isso toda chamada à API vira 404 (ver normalizarUrlEvolution).
+        ...(url ? { url: normalizarUrlEvolution(url) } : {}),
         ...(webhookSecret ? { webhookSecret } : {}),
       }
 
@@ -162,7 +175,51 @@ export async function salvarCanalAction(
   }
 
   revalidatePath('/canais')
+
+  /*
+   * Confere o endereço DEPOIS de salvar, e só avisa.
+   *
+   * Sem isto, um endereço errado só se manifestava lá na frente: o canal
+   * aparecia configurado, o botão do QR não fazia nada, e nada dizia se o
+   * problema era o endereço, a chave ou o servidor fora do ar. Colar o
+   * endereço do Manager (terminado em /manager) caía exatamente aí.
+   *
+   * Não bloqueia a gravação: a Evolution pode estar fora do ar num momento em
+   * que a credencial está certa, e recusar obrigaria a redigitar tudo depois.
+   */
+  if (canal === 'whatsapp') {
+    try {
+      const servidor = await withTenant(tenantOf(user), (tx) =>
+        resolverServidorEvolution(tx, user.orgId),
+      )
+
+      if (servidor) {
+        const teste = await verificarServidor(servidor)
+        if (!teste.ok) return { ok: true, aviso: explicarFalhaDoServidor(teste.codigo) }
+      }
+    } catch {
+      // Um problema ao VERIFICAR não pode desfazer um salvamento que deu certo.
+      log.warn('não foi possível verificar o servidor da Evolution')
+    }
+  }
+
   return { ok: true }
+}
+
+/** O que fazer, em português, para cada motivo de recusa do servidor. */
+function explicarFalhaDoServidor(codigo: string): string {
+  switch (codigo) {
+    case 'credencial_recusada':
+      return 'Salvo, mas a Evolution recusou a chave. Confira se é a AUTHENTICATION_API_KEY do servidor.'
+    case 'nao_encontrada':
+      return 'Salvo, mas esse endereço não respondeu como uma Evolution. Use a raiz do servidor (http://ip:8080), não a página do Manager.'
+    case 'servidor_indisponivel':
+      return 'Salvo, mas a Evolution não respondeu. Confira se ela está no ar.'
+    case 'rede':
+      return 'Salvo, mas não foi possível alcançar esse endereço. Ele precisa ser acessível pela internet — endereço local ou porta fechada não serve.'
+    default:
+      return 'Salvo, mas a Evolution não respondeu como esperado nesse endereço.'
+  }
 }
 
 // ── Provisionar da própria tela: criar na Evolution e ler o QR (§7.3) ────────

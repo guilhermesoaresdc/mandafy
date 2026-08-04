@@ -193,8 +193,15 @@ export function ConfigurarCanal({
         <Button type="button" variant="ghost" size="sm" onClick={() => setAberto(false)}>
           Fechar
         </Button>
-        {estado.ok ? <span className="text-2xs text-ok">Salvo.</span> : null}
+        {estado.ok && !estado.aviso ? <span className="text-2xs text-ok">Salvo.</span> : null}
       </div>
+
+      {/*
+        Salvou, mas o endereço não respondeu. Precisa ficar visível: era este o
+        caso em que a tela dizia "Salvo" e o QR depois não aparecia, sem nada
+        ligando uma coisa à outra.
+      */}
+      {estado.aviso ? <p className="text-2xs text-pending">{estado.aviso}</p> : null}
     </form>
   )
 }

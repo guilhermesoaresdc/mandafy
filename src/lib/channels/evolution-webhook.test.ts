@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizarUrlEvolution } from './evolution-admin'
 import { extrairTexto, lerRetorno, statusDoAck, telefoneDoJid } from './evolution-webhook'
 
 /**
@@ -183,5 +184,39 @@ describe('extrairTexto', () => {
   it('devolve null quando não há texto', () => {
     expect(extrairTexto({})).toBeNull()
     expect(extrairTexto(null)).toBeNull()
+  })
+})
+
+describe('endereço da Evolution (§8.2)', () => {
+  /*
+   * O endereço que a pessoa tem à mão é o do Manager — é o que fica na barra
+   * do navegador enquanto ela olha as instâncias. Colado como está, toda
+   * chamada virava `/manager/instance/create` e devolvia 404: o canal ficava
+   * configurado, o QR não aparecia, e nada dizia por quê.
+   */
+  it('tira /manager do fim, com ou sem barra', () => {
+    expect(normalizarUrlEvolution('http://187.0.0.1:8080/manager/')).toBe('http://187.0.0.1:8080')
+    expect(normalizarUrlEvolution('http://187.0.0.1:8080/manager')).toBe('http://187.0.0.1:8080')
+    expect(normalizarUrlEvolution('https://evo.exemplo.com/manager/')).toBe('https://evo.exemplo.com')
+  })
+
+  it('tira barras finais e espaço colado sem querer', () => {
+    expect(normalizarUrlEvolution('  http://187.0.0.1:8080//  ')).toBe('http://187.0.0.1:8080')
+  })
+
+  it('deixa a raiz intacta', () => {
+    expect(normalizarUrlEvolution('http://187.0.0.1:8080')).toBe('http://187.0.0.1:8080')
+  })
+
+  /*
+   * Só `/manager` sai. Qualquer outro sufixo pode ser um prefixo legítimo de
+   * proxy reverso — comer isso quebraria quem publica a Evolution sob um
+   * caminho.
+   */
+  it('não come outros caminhos', () => {
+    expect(normalizarUrlEvolution('https://exemplo.com/evolution')).toBe('https://exemplo.com/evolution')
+    expect(normalizarUrlEvolution('https://exemplo.com/manager-antigo')).toBe(
+      'https://exemplo.com/manager-antigo',
+    )
   })
 })
