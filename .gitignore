@@ -22,3 +22,9 @@ tsconfig.tsbuildinfo
 
 # volumes locais do docker compose
 .docker-data/
+
+# Snapshot do Redis. Nasce sozinho ao subir um `redis-server` local e muda a
+# cada gravação — versioná-lo produz diff em toda execução e chega a carregar
+# dado de teste para dentro do repositório.
+dump.rdb
+*.rdb
