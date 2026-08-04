@@ -106,13 +106,17 @@ services:
       CACHE_REDIS_URI: redis://redis:6379/1
       CACHE_REDIS_PREFIX_KEY: evolution
       CACHE_LOCAL_ENABLED: 'false'
-      # Só os eventos que o Mandafy consome (§8.2).
-      WEBHOOK_GLOBAL_ENABLED: 'true'
-      WEBHOOK_GLOBAL_URL: ${APP_URL}/api/webhooks/evolution
-      WEBHOOK_EVENTS_MESSAGES_UPSERT: 'true'
-      WEBHOOK_EVENTS_MESSAGES_UPDATE: 'true'
-      WEBHOOK_EVENTS_CONNECTION_UPDATE: 'true'
-      WEBHOOK_EVENTS_SEND_MESSAGE: 'true'
+      # Webhook global DESLIGADO, de propósito.
+      #
+      # Quem registra o endereço de retorno é o Mandafy, no momento em que cria
+      # a instância: cada uma recebe /api/evolution/{token} com o SEU token
+      # (§8.2, drizzle/0016). É isso que permite identificar de qual chip veio o
+      # retorno sem confiar no corpo da requisição.
+      #
+      # O global apontava para /api/webhooks/evolution, rota que não existe — a
+      # Evolution recebia 404 em cada evento e reenfileirava para sempre. Um
+      # endereço global também não teria como dizer qual instância falou.
+      WEBHOOK_GLOBAL_ENABLED: 'false'
       LOG_LEVEL: ERROR
     volumes:
       - evolution-instances:/evolution/instances
