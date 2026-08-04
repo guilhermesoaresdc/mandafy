@@ -114,6 +114,48 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
 
   const DADOS = { nome: 'Ana', valor_cents: 4990 }
 
+  /*
+   * O NOME DA PESSOA VEM DO CONTATO, não do evento.
+   *
+   * `dados` chega do mapeamento da plataforma, e o mapeamento traduz nome,
+   * telefone e e-mail para a tabela `contacts` — não para as variáveis. Sem
+   * misturar as duas coisas no enfileiramento, `{{nome}}` nunca resolvia num
+   * envio de verdade: toda mensagem do catálogo escreve
+   * `{{nome|primeiro_nome|"tudo bem"}}`, então o resultado não era erro, era a
+   * base inteira recebendo "Oi tudo bem!" com o nome guardado ao lado.
+   */
+  it('o nome do contato entra na mensagem sem ninguém mapear', async () => {
+    await comoSistema((tx) =>
+      enfileirarEnvio(tx, {
+        orgId: ORG,
+        contactId: CONTATO,
+        messageId: MENSAGEM,
+        // Repare: nenhum `nome` aqui. Só o que a plataforma mandaria no evento.
+        dados: { valor_cents: 4990 },
+      }),
+    )
+
+    const telegram = (await notificacoes()).find((l) => l.channel === 'telegram')
+    expect(telegram?.rendered_body).toContain('Ana')
+    expect(telegram?.rendered_body).not.toContain('{{')
+  })
+
+  it('o que o evento manda vence o que está no contato', async () => {
+    // A plataforma pode mandar um nome mais recente que a linha do contato no
+    // mesmo evento; ela é a fonte daquele instante.
+    await comoSistema((tx) =>
+      enfileirarEnvio(tx, {
+        orgId: ORG,
+        contactId: CONTATO,
+        messageId: MENSAGEM,
+        dados: { nome: 'Ana Paula', valor_cents: 4990 },
+      }),
+    )
+
+    const telegram = (await notificacoes()).find((l) => l.channel === 'telegram')
+    expect(telegram?.rendered_body).toContain('Ana Paula')
+  })
+
   it('enfileira os canais ligados e grava o corpo compilado', async () => {
     const resultados = await comoSistema((tx) =>
       enfileirarEnvio(tx, { orgId: ORG, contactId: CONTATO, messageId: MENSAGEM, dados: DADOS }),

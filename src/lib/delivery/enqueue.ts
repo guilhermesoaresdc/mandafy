@@ -118,6 +118,28 @@ export async function enfileirarEnvio(
   }
 
   /*
+   * O CONTATO ENTRA NAS VARIÁVEIS.
+   *
+   * Sem isto, `{{nome}}` só existia se a plataforma repetisse o nome dentro do
+   * evento: `dados` vinha exclusivamente dos campos mapeados, e a identidade
+   * — nome, telefone, e-mail — ficava na tabela `contacts`, invisível para a
+   * compilação. Toda mensagem do catálogo escreve
+   * `{{nome|primeiro_nome|"tudo bem"}}`, então o efeito não era um erro: era
+   * TODO MUNDO recebendo "Oi tudo bem!" para sempre, com o nome guardado no
+   * banco ao lado. Personalização silenciosamente desligada é pior que
+   * personalização quebrada, porque nada acusa.
+   *
+   * O dado do evento vem por último e vence: se a plataforma mandou um nome
+   * naquele evento específico, ele é mais recente que a linha do contato.
+   */
+  const dados: DadosVariaveis = {
+    ...(contato.name ? { nome: contato.name } : {}),
+    ...(contato.phoneE164 ? { telefone: contato.phoneE164 } : {}),
+    ...(contato.email ? { email: contato.email } : {}),
+    ...pedido.dados,
+  }
+
+  /*
    * Sem canais pedidos, os alvos são os LIGADOS — canal desligado simplesmente
    * não faz parte do envio, e não vira linha `skipped`. A diferença importa:
    * registrar um pulo por canal desligado a cada envio encheria uma tabela
@@ -169,7 +191,7 @@ export async function enfileirarEnvio(
     const corpo = corpoEfetivo(mensagem.body, variante ?? null)
     const compilado = compilar(corpo, {
       canal,
-      dados: pedido.dados,
+      dados,
       preheader: variante?.preheader ?? null,
       /*
        * O link de descadastro precisa entrar AQUI, na compilação.

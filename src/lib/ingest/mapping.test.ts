@@ -7,7 +7,7 @@ import { applyMapping, MAPEAMENTO_SUGERIDO } from './mapping'
  * nunca pode lançar.
  */
 
-/** Payload no formato que a spec descreve em §4.2. */
+/** Payload no formato que a spec descreve em §4.2, com dado de banca. */
 const payload = {
   event: 'qrcode_pago',
   data: {
@@ -15,11 +15,12 @@ const payload = {
     order: {
       id: 'ord_1',
       amount: 49.9,
-      tickets: 10,
+      payout: 900,
       pix_code: '00020126...',
       checkout_url: 'https://pag.to/x',
     },
-    campaign: { title: 'Fiat Argo 2026', prize: 'Um Fiat Argo' },
+    draw: { name: 'PTV 18h', closes_at: '2026-07-30T17:50:00-03:00' },
+    bet: { type: 'Grupo', pick: 'Elefante (grupo 11)' },
   },
 }
 
@@ -52,8 +53,10 @@ describe('applyMapping', () => {
     if (!r.ok) return
 
     expect(r.event.data.valor_cents).toBe(4990)
-    expect(r.event.data.quantidade).toBe(10)
-    expect(r.event.data.campanha).toBe('Fiat Argo 2026')
+    // O que a banca paga se o palpite bater — também em centavos (§4.1).
+    expect(r.event.data.retorno_cents).toBe(90000)
+    expect(r.event.data.sorteio).toBe('PTV 18h')
+    expect(r.event.data.palpite).toBe('Elefante (grupo 11)')
     expect(r.event.externalId).toBe('ord_1')
   })
 
