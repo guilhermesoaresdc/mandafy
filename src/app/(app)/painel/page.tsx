@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { withTenant } from '@/db'
 import { saudeDasInstancias } from '@/db/queries/channels'
+import { resumoNoAr } from '@/db/queries/no-ar'
 import { metricasDoPainel, proximosEnvios, saudeDosCanais } from '@/db/queries/painel'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { BarraDePulso, type EnvioNaBarra } from '@/components/shell/barra-de-pulso'
@@ -9,6 +10,7 @@ import { Card, CardBody, CardHeader, CardTitle, ChannelIcon, Stat } from '@/comp
 import { requireUser, tenantOf } from '@/lib/auth/current'
 import { avaliarAlertas } from '@/lib/alertas'
 import { cn, formatBRL, formatNumber, formatPercent } from '@/lib/utils'
+import { NoAr } from './no-ar'
 
 export const metadata: Metadata = { title: 'Painel · Mandafy' }
 export const dynamic = 'force-dynamic'
@@ -16,13 +18,16 @@ export const dynamic = 'force-dynamic'
 export default async function PainelPage() {
   const user = await requireUser()
 
-  const { metricas, proximos, canais, instancias } = await withTenant(
+  const { metricas, proximos, canais, instancias, noAr } = await withTenant(
     tenantOf(user),
     async (tx) => ({
       metricas: await metricasDoPainel(tx),
       proximos: await proximosEnvios(tx),
       canais: await saudeDosCanais(tx),
       instancias: user.isAdmin ? await saudeDasInstancias(tx) : [],
+      // Só para quem administra: consultor não liga nem desliga fluxo (§9.4),
+      // e mostrar-lhe um alerta que ele não pode resolver é ruído.
+      noAr: user.isAdmin ? await resumoNoAr(tx) : null,
     }),
   )
 
@@ -37,6 +42,8 @@ export default async function PainelPage() {
   return (
     <SessionFrame title="Painel" description={`Operação de ${user.orgName}`}>
       <div className="flex flex-col gap-4">
+        {noAr ? <NoAr resumo={noAr} /> : null}
+
         {/* ── Os cinco números (§10.3). Nada de gráfico decorativo. ── */}
         <Card>
           <CardBody className="grid grid-cols-2 gap-6 md:grid-cols-5">

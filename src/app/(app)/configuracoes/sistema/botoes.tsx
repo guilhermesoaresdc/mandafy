@@ -8,8 +8,8 @@ import type { EstadoAcao } from './actions'
  * Um botão que dispara uma operação de sistema e mostra o que aconteceu.
  *
  * O resultado fica na tela em vez de virar um toast: migrar e semear são
- * operações que a pessoa faz uma vez e precisa LER o resultado — inclusive a
- * senha do administrador, que aparece uma única vez e não é recuperável.
+ * operações que a pessoa faz uma vez e precisa LER o resultado — o que foi
+ * criado é justamente o que decide o próximo passo dela.
  */
 export function BotaoDeSistema({
   acao,
@@ -40,15 +40,6 @@ export function BotaoDeSistema({
 
       {estado.ok ? (
         <p className="rounded-lg border border-ok/40 px-3 py-2 text-2xs text-ok">{estado.ok}</p>
-      ) : null}
-
-      {estado.senha ? (
-        <div className="rounded-lg border border-pending/50 px-3 py-2">
-          <p className="text-2xs text-ink-2">
-            Senha do administrador — <strong>anote agora</strong>, ela não aparece de novo:
-          </p>
-          <p className="mt-1 font-mono text-xs text-ink select-all">{estado.senha}</p>
-        </div>
       ) : null}
 
       {estado.erro ? (

@@ -38,8 +38,18 @@ export function EnviarTeste({ messageId }: { messageId: string }) {
       <CardBody className="flex flex-col gap-3">
         <div>
           <p className="text-xs font-medium text-ink">Enviar teste</p>
+          {/*
+            A frase precisa responder a dúvida que o NOME da mensagem cria.
+
+            "Lembrete de PIX — 5 minutos" faz quem clica esperar cinco minutos.
+            Os cinco minutos são do passo do fluxo, não da mensagem: mensagem
+            não tem tempo próprio, e o teste sai na hora. A copy antiga falava
+            de "ritmo" e "janela de silêncio" — dois conceitos que ninguém
+            perguntou — e calava justamente sobre o que gera a dúvida.
+          */}
           <p className="text-2xs text-pending">
-            Sai pelo mesmo caminho de um envio real, sem esperar o ritmo nem a janela de silêncio.
+            Sai agora, pelo mesmo caminho de um envio real. Se esta mensagem tem espera, ela é do
+            passo do fluxo — não daqui.
           </p>
         </div>
 

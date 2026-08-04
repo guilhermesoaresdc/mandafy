@@ -2,8 +2,9 @@ import type { Metadata } from 'next'
 import { withTenant } from '@/db'
 import { montarPipeline } from '@/db/queries/leads'
 import { SessionFrame } from '@/components/shell/app-shell'
-import { EmptyState } from '@/components/ui'
+import { BotaoAcao, EmptyState } from '@/components/ui'
 import { requireUser, tenantOf } from '@/lib/auth/current'
+import { criarFunilPadraoAction } from './actions'
 import { Kanban, type Coluna } from './kanban'
 
 export const metadata: Metadata = { title: 'Pipeline · Mandafy' }
@@ -46,9 +47,32 @@ export default async function PipelinePage() {
       }
     >
       {paraKanban.length === 0 ? (
+        /*
+         * O botão só aparece para quem administra.
+         *
+         * Esta é a única tela do grupo autenticado que entra por `requireUser`,
+         * não `requireAdmin`: um consultor que clicasse tomaria a exceção de
+         * permissão crua na tela. A diferença entre "não posso" e "não entendi"
+         * é mostrar o caminho para quem pode resolver.
+         */
         <EmptyState
           title="Nenhum funil configurado"
-          description="Rode `npm run db:seed` para criar o funil padrão: Novo → Contatado → Negociando → Ganho / Perdido."
+          description={
+            user.isAdmin
+              ? 'O funil padrão é Novo → Contatado → Negociando → Ganho / Perdido. Dá para renomear as etapas depois.'
+              : 'Peça a quem administra o Mandafy para criar o funil de vendas.'
+          }
+          {...(user.isAdmin
+            ? {
+                action: (
+                  <BotaoAcao
+                    acao={criarFunilPadraoAction}
+                    rotulo="Criar o funil padrão"
+                    rotuloOcupado="Criando…"
+                  />
+                ),
+              }
+            : {})}
         />
       ) : vazio ? (
         <div className="flex flex-col gap-4">

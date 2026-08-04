@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { withTenant } from '@/db'
 import { buscarFluxo } from '@/db/queries/flows'
+import { seedFlows } from '@/db/seed-flows'
+import { semearRitmos } from '@/db/seed-org'
 import { flows, flowSteps } from '@/db/schema'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
@@ -18,6 +20,63 @@ import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 const log = createLogger('fluxos-ui')
 
 export type FluxoState = { erro?: string; ok?: boolean; aviso?: string }
+
+/** O botão do estado vazio devolve texto, não booleano: ele mostra o que criou. */
+export type EstadoSemeadura = { ok?: string; erro?: string }
+
+/**
+ * Traz os nove fluxos-modelo para a organização de quem clicou (§5.2).
+ *
+ * Existe porque a tela vazia mandava rodar `npm run db:seed`. Quem opera este
+ * sistema não abre terminal — e a instrução era, além de inútil, redundante: o
+ * mesmo trabalho já era feito por um botão escondido em Configurações →
+ * Sistema. Aqui ele está onde a falta é sentida.
+ *
+ * A ORDEM NÃO É ARBITRÁRIA. Os ritmos vêm primeiro porque `seedFlows` liga
+ * cada fluxo ao seu ritmo procurando por NOME: sem "Seguro", "Instantâneo",
+ * "Conservador" e "Disparo em massa" gravados antes, os nove fluxos nascem sem
+ * ritmo nenhum, em silêncio, e a coluna some da tela.
+ */
+export async function criarFluxosModeloAction(): Promise<EstadoSemeadura> {
+  const user = await requireAdmin()
+  assertCan(user, 'fluxos.gerenciar')
+
+  try {
+    const feito = await withTenant(tenantOf(user), async (tx) => {
+      const ritmos = await semearRitmos(tx, user.orgId)
+      /*
+       * `user.orgId`, nunca um id vindo de formulário: `seedFlows` recebe a
+       * organização por parâmetro e não a lê do contexto. Um id divergente faria
+       * as buscas de existência voltarem vazias sob o RLS, o código concluiria
+       * "não existe" e só o INSERT estouraria.
+       */
+      const modelos = await seedFlows(tx, user.orgId)
+      return { ritmos, ...modelos }
+    })
+
+    revalidatePath('/fluxos')
+    revalidatePath('/mensagens')
+
+    if (feito.fluxos === 0 && feito.mensagens === 0 && feito.ritmos === 0) {
+      return { ok: 'Nada a fazer: os modelos já estavam aqui.' }
+    }
+
+    const partes = [
+      feito.fluxos > 0 && `${feito.fluxos} fluxo${feito.fluxos === 1 ? '' : 's'}`,
+      feito.mensagens > 0 && `${feito.mensagens} mensagem${feito.mensagens === 1 ? '' : 's'}`,
+      feito.ritmos > 0 && `${feito.ritmos} ritmo${feito.ritmos === 1 ? '' : 's'} de envio`,
+    ].filter((p): p is string => typeof p === 'string')
+
+    return {
+      ok: `Pronto: ${partes.join(', ')}. Todos chegam pausados — leia o texto e ligue o que quiser no ar.`,
+    }
+  } catch (erro) {
+    log.error('falha ao trazer os fluxos-modelo', {
+      reason: erro instanceof Error ? erro.message.slice(0, 160) : 'desconhecido',
+    })
+    return { erro: 'Não foi possível trazer os modelos. Tente de novo.' }
+  }
+}
 
 export async function alternarFluxoAction(formData: FormData): Promise<void> {
   const user = await requireAdmin()

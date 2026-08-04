@@ -6,11 +6,12 @@ import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { buscarMensagem } from '@/db/queries/messages'
 import { CHANNELS } from '@/db/schema/enums'
+import { compilar } from '@/lib/messages/compile'
+import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
+import { contarSms, foraDoGsm7, paraGsm7, removerEmoji } from '@/lib/messages/gsm'
 import { linhasDoModelo, acharModelo } from '@/lib/messages/aplicar-modelo'
 import { MENSAGENS, type ModeloMensagem } from '@/lib/messages/modelos'
 import { resumoDosModelos } from '@/lib/messages/galeria'
-import { compilar } from '@/lib/messages/compile'
-import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 
 /**
  * Modelos de mensagem (§5.2, §6.1, §11.7).
@@ -181,6 +182,123 @@ describe('§6.1 — o catálogo de modelos', () => {
     expect(acharModelo(MENSAGENS, 'nao_existe')).toBeNull()
     expect(acharModelo(MENSAGENS, '')).toBeNull()
     expect(acharModelo(MENSAGENS, undefined)).toBeNull()
+  })
+})
+
+/**
+ * O custo do SMS (§6.4, §8.4).
+ *
+ * Este bloco é o único guarda entre a caixa de texto e a fatura do provedor.
+ * `tsc`, `eslint` e `next build` passam com um modelo de três segmentos, e a
+ * tela não mostra o custo depois do envio — um travessão colado do Word triplica
+ * a conta em silêncio, e ninguém descobre.
+ *
+ * Foi assim que quase todo modelo ficou saindo em 2 ou 3 segmentos.
+ */
+describe('§6.4 — todo modelo cabe em um segmento de SMS', () => {
+  /**
+   * O caso ruim, e não o bonito.
+   *
+   * O contato de exemplo tem nome curto, valor de dois dígitos e uma URL de 49
+   * caracteres. A realidade tem "WELLINGTON APARECIDO", R$ 1.234,56 e um
+   * checkout com uuid no caminho. Medir só pelo exemplo é medir o que não
+   * acontece.
+   */
+  const PESSIMISTA = {
+    ...CONTATO_EXEMPLO,
+    nome: 'WELLINGTON APARECIDO GONÇALVES',
+    primeiro_nome: 'Wellington',
+    valor_cents: 123456,
+    retorno_cents: 9876543,
+    saldo_cents: 123456,
+    // Com travessão de propósito: nome de sorteio é texto livre digitado por
+    // quem opera a banca, e era ele — não o acento — que mantinha sete modelos
+    // em UCS-2 mesmo com "remover acentuação" ligado.
+    sorteio: 'Federal — Extração Especial de Natal',
+    palpite: 'Elefante (grupo 11) na milhar 7842',
+    modalidade: 'Milhar invertida',
+    link_pagamento:
+      'https://premiabicho.exemplo.com.br/aposta/9f2c1b44-8e0a-4d77-b1c2-5e6a7f8d9012/pagar',
+  }
+
+  function medir(modelo: ModeloMensagem, dados: typeof CONTATO_EXEMPLO) {
+    const variante = modelo.variantes?.sms
+    const compilada = compilar(variante?.body ?? modelo.body, {
+      canal: 'sms',
+      dados,
+      semente: 1,
+      sms: { removerAcentuacao: variante?.stripAccents ?? false },
+    })
+    expect(compilada.ok, `${modelo.key} não compila para SMS`).toBe(true)
+    return compilada.ok ? compilada.sms! : null!
+  }
+
+  it('todo modelo tem versão de SMS escrita à mão', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      // Espelhar o corpo do WhatsApp no SMS é o que custava 2 a 3 segmentos:
+      // o texto que cabe numa conversa não cabe em 160 caracteres.
+      expect(modelo.variantes?.sms?.body, `SMS de ${modelo.key}`).toBeTruthy()
+      expect(modelo.variantes?.sms?.stripAccents, `stripAccents de ${modelo.key}`).toBe(true)
+    }
+  })
+
+  it('cabe em UM segmento também com nome longo, valor alto e link de checkout', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const sms = medir(modelo, PESSIMISTA)
+      expect(sms.codificacao, `codificação de ${modelo.key}`).toBe('GSM-7')
+      expect(
+        sms.segmentos,
+        `${modelo.key} passou de 160: ${sms.unidades} caracteres`,
+      ).toBe(1)
+    }
+  })
+
+  it('o texto que NÓS escrevemos já nasce dentro do GSM-7', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      // Sem os `{{…}}`: o valor de uma variável vem da plataforma da
+      // organização — "Moto 0km — Edição de Julho" é nome de campanha digitado
+      // por gente, e é justamente por ele que `stripAccents` precisa continuar
+      // ligado. O que este caso cobra é a parte sob nosso controle.
+      const escrito = (modelo.variantes?.sms?.body ?? '').replace(/\{\{[^}]*\}\}/g, '')
+
+      /*
+       * Escrever já sem acento não é redundância com a caixa marcada: é o que
+       * faz desmarcá-la não estragar o texto. Uma economia que depende de um
+       * clique permanecer marcado não é uma economia — é uma armadilha.
+       */
+      expect(
+        foraDoGsm7(escrito),
+        `SMS de ${modelo.key} tem caractere fora do GSM-7`,
+      ).toEqual([])
+    }
+  })
+})
+
+describe('§6.4 — o que estoura o GSM-7 além do acento', () => {
+  it('travessão, reticências e aspas curvas viram equivalentes do alfabeto', () => {
+    // Nenhum deles tem decomposição canônica, então `removerAcentos` os ignora.
+    // Um travessão sozinho derruba o limite de 160 para 70.
+    expect(paraGsm7('Moto 0km — Edição de Julho')).toBe('Moto 0km - Edicao de Julho')
+    expect(paraGsm7('espere…')).toBe('espere...')
+    expect(paraGsm7('a “campanha” do ‘mês’')).toBe('a "campanha" do \'mes\'')
+    expect(paraGsm7('1º lugar, 2ª via')).toBe('1o lugar, 2a via')
+
+    expect(contarSms(paraGsm7('Moto 0km — Edição de Julho')).codificacao).toBe('GSM-7')
+  })
+
+  it('o que não tem equivalente é descartado, em vez de dobrar a conta', () => {
+    // Vem do valor de uma variável, que a plataforma da organização preenche.
+    // Não há troca razoável — e cair para 70 caracteres por causa dele é pior.
+    expect(paraGsm7('preço 中 final')).toBe('preco final')
+    expect(contarSms(paraGsm7('preço 中 final')).codificacao).toBe('GSM-7')
+  })
+
+  it('o relógio ⏰ é removido junto com os outros emoji', () => {
+    // U+23F0 fica no bloco de símbolos técnicos, que o regex de emoji não
+    // cobria. Ele abria a mensagem de campanha encerrando e sozinho jogava a
+    // mensagem inteira para UCS-2.
+    expect(removerEmoji('⏰ Ultimas horas')).not.toContain('⏰')
+    expect(contarSms(removerEmoji('⏰ Ultimas horas')).codificacao).toBe('GSM-7')
   })
 })
 

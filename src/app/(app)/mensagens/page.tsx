@@ -21,7 +21,7 @@ export default async function MensagensPage() {
 
   /*
    * A galeria é montada aqui, no servidor, e desce como texto já compilado. O
-   * corpo inteiro dos treze modelos não precisa atravessar a rede para caber em
+   * corpo inteiro do catálogo não precisa atravessar a rede para caber em
    * duas linhas de cartão (§13.1).
    */
   const modelos = resumoDosModelos()
@@ -35,7 +35,7 @@ export default async function MensagensPage() {
       {lista.length === 0 ? (
         <EmptyState
           title="Nenhuma mensagem ainda"
-          description="Clique em “Nova mensagem”: há treze modelos prontos para escolher, do lembrete de PIX ao aviso de prêmio. Dá para editar tudo depois."
+          description="Clique em “Nova mensagem”: há modelos prontos para escolher, do lembrete de PIX ao aviso de prêmio. Dá para editar tudo depois."
         />
       ) : (
         <div className="flex max-w-3xl flex-col gap-2">

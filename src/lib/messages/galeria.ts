@@ -9,7 +9,7 @@
  *
  * POR QUE ISTO NÃO VIVE NO COMPONENTE
  *
- * O corpo inteiro dos treze modelos são alguns milhares de caracteres, e a tela
+ * O corpo inteiro do catálogo são alguns milhares de caracteres, e a tela
  * de mensagens tem orçamento de peso (§13). Compilando no servidor, o navegador
  * recebe só as duas linhas que cabem no cartão; o texto completo fica no
  * servidor, onde já estava.

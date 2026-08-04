@@ -1,5 +1,5 @@
 import type { Bloco, No } from './ast'
-import { removerAcentos, removerEmoji } from './gsm'
+import { paraGsm7, removerEmoji } from './gsm'
 
 /**
  * Os quatro renderizadores de §6.2.
@@ -305,7 +305,14 @@ export function renderSms(blocos: Bloco[], opcoes: OpcoesSms = {}): string {
     .join('\n')
 
   saida = removerEmoji(saida)
-  if (opcoes.removerAcentuacao) saida = removerAcentos(saida)
+
+  /*
+   * `paraGsm7` e não `removerAcentos`: tirar o acento resolve metade do
+   * problema, e a metade que sobra — travessão, reticências, aspas curvas — vem
+   * justamente do valor das variáveis, que é texto digitado por quem opera. A
+   * opção promete cortar o custo; ela precisa cortar de verdade.
+   */
+  if (opcoes.removerAcentuacao) saida = paraGsm7(saida)
 
   /*
    * Colapsa espaço repetido. Sobra sempre que algo foi retirado — o riscado

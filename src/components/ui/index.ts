@@ -1,4 +1,5 @@
 export { Badge } from './badge'
+export { BotaoAcao, type EstadoDeAcao } from './botao-acao'
 export { Button } from './button'
 export { Card, CardBody, CardHeader, CardTitle } from './card'
 export { ChannelIcon } from './channel-icon'

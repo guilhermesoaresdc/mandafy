@@ -25,7 +25,7 @@ import { criarMensagemAction, type MensagemState } from './actions'
  *
  * COMEÇAR DO ZERO ERA O ÚNICO CAMINHO
  *
- * A tela pedia nome e categoria e abria o editor vazio. Os treze modelos
+ * A tela pedia nome e categoria e abria o editor vazio. Os modelos
  * prontos existiam — mas só para quem tinha rodado o seed, e mesmo aí ninguém
  * descobria que dava para partir deles: o cinza no editor é texto de exemplo,
  * que some ao digitar. "Comece pelo modelo de recuperação de PIX — leva 2

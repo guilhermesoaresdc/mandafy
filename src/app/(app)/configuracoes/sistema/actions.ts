@@ -1,9 +1,11 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { withTenant } from '@/db'
 import { runMigrations } from '@/db/migrate'
-import { seed } from '@/db/seed'
-import { requireAdmin } from '@/lib/auth/current'
+import { seedFlows } from '@/db/seed-flows'
+import { semearFunilPadrao, semearRitmos } from '@/db/seed-org'
+import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { createLogger } from '@/lib/logger'
 import { tickDeEnvio } from '@/lib/delivery/tick'
@@ -32,8 +34,6 @@ const log = createLogger('sistema')
 export type EstadoAcao = {
   ok?: string
   erro?: string
-  /** A senha do administrador, quando o seed acabou de criá-lo. */
-  senha?: string
 }
 
 export async function migrarAction(): Promise<EstadoAcao> {
@@ -59,17 +59,46 @@ export async function migrarAction(): Promise<EstadoAcao> {
   }
 }
 
+/**
+ * Cria o que faltar NA ORGANIZAÇÃO DE QUEM CLICOU.
+ *
+ * O BUG QUE ISTO CONSERTA
+ *
+ * Este botão chamava `seed()`, a rotina de instalação a partir do zero. Ela
+ * procura a organização por um `slug` fixo — `mandafy` — e, quando não acha,
+ * CRIA outra. Numa instalação cuja organização tenha outro slug, o clique
+ * criava uma segunda organização, semeava tudo lá dentro e respondia
+ * "Criado: organização, 9 fluxo(s)-modelo". A tela de fluxos continuava vazia.
+ *
+ * Mensagem de sucesso com resultado invisível é o pior desfecho que uma
+ * operação pode ter: a pessoa não tem por onde desconfiar, e o próximo passo
+ * dela é procurar o problema em qualquer outro lugar.
+ *
+ * Agora a semeadura roda dentro de `withTenant`, com o `orgId` da sessão. Se o
+ * RLS recusar alguma escrita, ela falha alto em vez de gravar no lugar errado.
+ * `seed()` continua existindo, para a primeira subida pelo comando, onde não há
+ * sessão de onde tirar organização.
+ */
 export async function semearAction(): Promise<EstadoAcao> {
   const user = await requireAdmin()
   assertCan(user, 'integracoes.gerenciar')
 
   try {
-    const r = await seed()
+    const r = await withTenant(tenantOf(user), async (tx) => {
+      // Ritmos ANTES dos fluxos: `seedFlows` casa fluxo com ritmo por nome, e
+      // sem eles os nove nascem sem ritmo em silêncio.
+      const perfis = await semearRitmos(tx, user.orgId)
+      const pipelineCriado = await semearFunilPadrao(tx, user.orgId)
+      const modelos = await seedFlows(tx, user.orgId)
+      return { perfis, pipelineCriado, ...modelos }
+    })
+
     revalidatePath('/configuracoes/sistema')
+    revalidatePath('/fluxos')
+    revalidatePath('/mensagens')
+    revalidatePath('/pipeline')
 
     const feitos = [
-      r.orgCriada && 'organização',
-      r.adminCriado && 'administrador',
       r.perfis > 0 && `${r.perfis} perfil(is) de ritmo`,
       r.pipelineCriado && 'funil padrão',
       r.mensagens > 0 && `${r.mensagens} mensagem(ns)`,
@@ -79,14 +108,8 @@ export async function semearAction(): Promise<EstadoAcao> {
     return {
       ok:
         feitos.length === 0
-          ? 'Nada a fazer: os dados-modelo já existiam.'
-          : `Criado: ${feitos.join(', ')}. Os fluxos nascem pausados — revise o texto antes de ativar.`,
-      /*
-       * A senha só existe neste retorno, e só quando o administrador acabou de
-       * ser criado. Não vai para log (§14.1) nem fica guardada em lugar nenhum:
-       * o hash é o que o banco tem.
-       */
-      ...(r.senhaGerada ? { senha: r.senhaGerada } : {}),
+          ? 'Nada a fazer: já estava tudo aqui.'
+          : `Criado em ${user.orgName}: ${feitos.join(', ')}. Os fluxos nascem pausados — revise o texto antes de ativar.`,
     }
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : 'falha desconhecida'

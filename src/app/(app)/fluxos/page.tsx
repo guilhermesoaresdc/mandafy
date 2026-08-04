@@ -3,9 +3,9 @@ import Link from 'next/link'
 import { withTenant } from '@/db'
 import { listarFluxos } from '@/db/queries/flows'
 import { SessionFrame } from '@/components/shell/app-shell'
-import { Badge, Button, Card, CardBody, EmptyState } from '@/components/ui'
+import { Badge, BotaoAcao, Button, Card, CardBody, EmptyState } from '@/components/ui'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
-import { alternarFluxoAction } from './actions'
+import { alternarFluxoAction, criarFluxosModeloAction } from './actions'
 
 export const metadata: Metadata = { title: 'Fluxos · Mandafy' }
 export const dynamic = 'force-dynamic'
@@ -21,10 +21,25 @@ export default async function FluxosPage() {
       description="O que dispara, quando sai, e o que faz parar."
     >
       {lista.length === 0 ? (
-        /* Copy de vazio convida à ação (§11.7). */
+        /*
+         * Vazio convida à ação (§11.7) — e a ação fica AQUI.
+         *
+         * Este texto mandava rodar `npm run db:seed`. Quem opera o Mandafy
+         * trabalha pelo navegador: a instrução era uma porta sem maçaneta. Pior,
+         * era desnecessária — o mesmo trabalho já existia num botão escondido em
+         * Configurações → Sistema, onde ninguém procura quando o que falta é um
+         * fluxo.
+         */
         <EmptyState
           title="Nenhum fluxo ainda"
-          description="Rode `npm run db:seed` para trazer os nove modelos, incluindo a recuperação de PIX — ela avisa quem gerou o pagamento e não pagou, e para sozinha no instante em que o pagamento entra."
+          description="Comece pela recuperação de PIX: ela avisa quem gerou o pagamento e não pagou, e para sozinha no instante em que o pagamento entra. Todos chegam pausados — você lê o texto antes de ligar."
+          action={
+            <BotaoAcao
+              acao={criarFluxosModeloAction}
+              rotulo="Trazer os nove fluxos prontos"
+              rotuloOcupado="Trazendo…"
+            />
+          }
         />
       ) : (
         <div className="flex max-w-3xl flex-col gap-2">

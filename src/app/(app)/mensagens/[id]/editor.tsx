@@ -21,7 +21,7 @@ import {
   type Channel,
 } from '@/db/schema/enums'
 import { analisar } from '@/lib/messages/analise'
-import { compilarTodos, variaveisDoCorpo } from '@/lib/messages/compile'
+import { compilar, variaveisDoCorpo } from '@/lib/messages/compile'
 import { CONTATO_EXEMPLO, VARIAVEIS_DISPONIVEIS } from '@/lib/messages/exemplo'
 import { amostras, contarCombinacoes, sementeDeTexto } from '@/lib/messages/spintax'
 import { corpoEfetivo } from '@/lib/messages/sync'
@@ -110,10 +110,39 @@ export function EditorMensagem({
    */
   const semente = useMemo(() => sementeDeTexto(corpo), [corpo])
 
-  const compilacoes = useMemo(
-    () => compilarTodos(corpo, { dados: CONTATO_EXEMPLO, previa: true, semente }),
-    [corpo, semente],
-  )
+  /*
+   * A prévia compila o que CADA CANAL vai mandar, e não o corpo principal
+   * quatro vezes.
+   *
+   * A diferença aparecia no dinheiro. O contador de SMS media o texto
+   * principal, sem a opção "remover acentuação" que a caixa ao lado dele
+   * mostrava marcada — então ele pintava "3 segmentos" em vermelho para uma
+   * mensagem que sairia em 1, e a pessoa que marcava a caixa não via o número
+   * mudar. Uma opção que não move o contador parece uma opção que não funciona.
+   *
+   * `corpoEfetivo` é a mesma função que o envio usa: variante customizada tem
+   * texto próprio, variante sincronizada segue o principal.
+   */
+  const compilacoes = useMemo(() => {
+    const saida = {} as Record<Channel, ReturnType<typeof compilar>>
+
+    for (const canal of CHANNELS) {
+      const variante = porCanal.get(canal)
+
+      saida[canal] = compilar(corpoEfetivo(corpo, variante ?? null), {
+        canal,
+        dados: CONTATO_EXEMPLO,
+        previa: true,
+        semente,
+        preheader: variante?.preheader ?? null,
+        ...(canal === 'sms'
+          ? { sms: { removerAcentuacao: variante?.stripAccents ?? false } }
+          : {}),
+      })
+    }
+
+    return saida
+  }, [corpo, semente, porCanal])
 
   const avisos = useMemo(() => analisar(corpo), [corpo])
   const usadas = useMemo(() => variaveisDoCorpo(corpo), [corpo])
@@ -551,14 +580,26 @@ function VarianteForm({
               />
               Remover acentuação (corta o custo pela metade)
             </label>
-            <label className="flex cursor-pointer items-center gap-1.5 text-2xs text-ink-2">
+            {/*
+              Desligada, e dizendo por quê.
+
+              A caixa vinha marcada por padrão, gravava no banco e não mudava
+              nada: o encurtador de §6.4 ainda não existe, e ninguém alimenta o
+              gancho que o renderizador oferece. Uma opção que promete cortar o
+              custo e não corta é pior que uma opção ausente — a pessoa marca,
+              continua pagando o link inteiro e para de procurar onde o dinheiro
+              está indo. O valor guardado é preservado para quando o serviço
+              existir.
+            */}
+            <label className="flex items-center gap-1.5 text-2xs text-pending">
               <input
                 type="checkbox"
                 name="encurtarLinks"
                 defaultChecked={variante.linkShorten}
+                disabled
                 className="size-3 accent-ink"
               />
-              Encurtar links
+              Encurtar links — ainda não disponível
             </label>
           </div>
         ) : null}
