@@ -74,6 +74,27 @@ export default async function LeadsPage({
           ? 'Todo mundo que passou por aqui. Os leads nascem sozinhos conforme os eventos chegam.'
           : 'Os seus leads.'
       }
+      /*
+       * Importar e exportar andam juntos no cabeçalho porque são o mesmo
+       * trabalho visto dos dois lados: tirar a base para ajustar na planilha e
+       * trazê-la de volta. Separá-los em telas distintas faria procurar.
+       */
+      actions={
+        <>
+          <Link
+            href="/api/leads/csv"
+            className="h-8 rounded-lg border border-line px-3 text-2xs leading-8 font-medium text-ink hover:bg-surface-2"
+          >
+            Exportar CSV
+          </Link>
+          <Link
+            href="/leads/importar"
+            className="h-8 rounded-lg bg-live px-3 text-2xs leading-8 font-medium text-white hover:bg-live/90"
+          >
+            Importar lista
+          </Link>
+        </>
+      }
     >
       <div className="flex flex-col gap-4">
         <Card>
