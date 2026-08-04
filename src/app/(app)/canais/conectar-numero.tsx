@@ -196,27 +196,48 @@ export function LeitorDeQr({
               .
             </p>
 
-            <div className="flex size-56 items-center justify-center rounded-lg border border-line bg-white">
+            {/*
+              O QR chega da Evolution como PNG pequeno. Ampliar com suavização
+              borra as bordas dos módulos e é o que faz a câmera desistir —
+              então `pixelated`: um QR é preto e branco puro, e vizinho-mais-
+              próximo é a ampliação CERTA para ele, não um paliativo.
+
+              O `p-4` branco é a zona de silêncio que o formato exige. Sem ela
+              a borda do cartão encosta nos módulos e a leitura falha em parte
+              dos aparelhos — era o caso da versão anterior, com o QR colado na
+              moldura.
+            */}
+            <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-line">
               {qr.estado === 'qr' && qr.base64 ? (
                 <img
                   src={qr.base64.startsWith('data:') ? qr.base64 : `data:image/png;base64,${qr.base64}`}
                   alt="QR Code para conectar o WhatsApp"
-                  className="size-52"
+                  className="size-64 [image-rendering:pixelated]"
                 />
               ) : (
-                <span className="text-2xs text-pending">gerando o código…</span>
+                <div className="flex size-64 items-center justify-center">
+                  <span className="text-2xs text-pending">gerando o código…</span>
+                </div>
               )}
             </div>
 
+            {/*
+              O código de pareamento é a saída quando a câmera não colabora —
+              tela com brilho baixo, lente riscada, aparelho antigo. Estava
+              numa linha de texto corrida; agora tem o mesmo peso do QR, porque
+              quando o QR falha é ele que resolve.
+            */}
             {qr.pairingCode ? (
-              <p className="text-2xs text-ink-2">
-                Ou digite o código{' '}
-                <span className="font-mono text-ink">{qr.pairingCode}</span> no celular.
-              </p>
+              <div className="flex w-full max-w-xs flex-col items-center gap-1 rounded-lg border border-line px-3 py-2">
+                <p className="text-2xs text-ink-2">Ou digite este código no celular</p>
+                <p className="font-mono text-base font-bold tracking-[0.2em] text-ink">
+                  {qr.pairingCode}
+                </p>
+              </div>
             ) : null}
 
             <p className="text-2xs text-pending">
-              O código muda sozinho a cada poucos segundos. Deixe esta tela aberta.
+              O código se renova sozinho a cada poucos segundos. Deixe esta tela aberta.
             </p>
 
             <Button type="button" variant="ghost" size="sm" onClick={onFechar}>

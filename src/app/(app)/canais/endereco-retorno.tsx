@@ -63,7 +63,7 @@ export function EnderecoRetorno({
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface-2 p-2.5">
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-line bg-surface-2 p-2.5">
       <p className="text-2xs font-medium text-ink">{texto.titulo}</p>
       <p className="text-2xs text-ink-2">{texto.onde}</p>
 
