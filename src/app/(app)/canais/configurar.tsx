@@ -98,6 +98,18 @@ export function ConfigurarCanal({
             maxLength={300}
             placeholder="https://evolution.seudominio.com.br"
             className="font-mono"
+            /*
+             * O navegador preenchia este campo com o e-mail salvo do usuário.
+             * `name="url"` sozinho não impede: o Chrome usa a posição do campo
+             * no formulário tanto quanto o nome, e este é o primeiro de texto.
+             *
+             * O resultado era um endereço de Evolution com um e-mail dentro —
+             * salvo em silêncio se a pessoa não reparasse, e um canal que
+             * nunca conecta sem dizer por quê.
+             */
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
             aria-describedby={fieldDescriptionId(urlId)}
           />
         </Field>
