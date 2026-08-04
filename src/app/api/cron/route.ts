@@ -78,7 +78,16 @@ const TRAVA = 8_270_120
  * `sem_segredo` não vaza nada de útil para quem sonda: revela que o endpoint
  * está desconfigurado, o que já é visível pelo fato de ele recusar tudo.
  */
-type Autorizacao = 'ok' | 'sem_segredo' | 'segredo_curto' | 'nao_confere'
+type Autorizacao =
+  | 'ok'
+  | 'sem_segredo'
+  | 'segredo_curto'
+  /** Não veio cabeçalho `Authorization` nenhum. */
+  | 'sem_cabecalho'
+  /** Veio, mas não no formato `Bearer <segredo>`. */
+  | 'formato_invalido'
+  /** Bem formado, valor diferente. */
+  | { tipo: 'nao_confere'; recebidos: number }
 
 /**
  * Tamanho mínimo do segredo.
@@ -101,10 +110,22 @@ function autorizar(request: NextRequest): Autorizacao {
   if (!segredo) return 'sem_segredo'
   if (segredo.length < CRON_SECRET_MINIMO) return 'segredo_curto'
 
-  const header = request.headers.get('authorization') ?? ''
+  /*
+   * Os três motivos de recusa são separados porque cada um se conserta num
+   * lugar diferente, e antes os três respondiam a mesma coisa.
+   *
+   * O caso comum na configuração de um agendador externo é o cabeçalho ir sem
+   * o prefixo `Bearer ` — o campo do painel pede nome e valor separados, e é
+   * natural colar só o segredo. Isso produzia exatamente a mesma resposta de
+   * um segredo desatualizado, então quem estava com o formato errado ia
+   * revirar as variáveis da Vercel, que estavam certas.
+   */
+  const header = request.headers.get('authorization')
+  if (!header || header.trim() === '') return 'sem_cabecalho'
+
   const match = /^Bearer\s+(.+)$/i.exec(header.trim())
   const enviado = match?.[1]?.trim()
-  if (!enviado) return 'nao_confere'
+  if (!enviado) return 'formato_invalido'
 
   // Comparação de tempo constante: comparar com === vaza o tamanho do prefixo
   // correto pelo tempo de resposta, e o segredo é adivinhável byte a byte.
@@ -112,7 +133,7 @@ function autorizar(request: NextRequest): Autorizacao {
   const b = Buffer.from(segredo, 'utf8')
   const confere = a.length === b.length && timingSafeEqual(a, b)
 
-  return confere ? 'ok' : 'nao_confere'
+  return confere ? 'ok' : { tipo: 'nao_confere', recebidos: enviado.length }
 }
 
 function recusa(motivo: Exclude<Autorizacao, 'ok'>): NextResponse {
@@ -144,13 +165,50 @@ function recusa(motivo: Exclude<Autorizacao, 'ok'>): NextResponse {
     )
   }
 
+  if (motivo === 'sem_cabecalho') {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'sem_credencial',
+        hint:
+          'A chamada chegou sem o cabeçalho Authorization. No agendador, adicione um ' +
+          'cabeçalho com nome "Authorization" e valor "Bearer SEU_SEGREDO" — o nome e o ' +
+          'valor vão em campos separados.',
+      },
+      { status: 401 },
+    )
+  }
+
+  if (motivo === 'formato_invalido') {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'formato_invalido',
+        hint:
+          'O cabeçalho Authorization veio, mas não no formato esperado. O valor precisa ser ' +
+          'a palavra Bearer, um espaço, e então o segredo: "Bearer SEU_SEGREDO". Colar só o ' +
+          'segredo, sem o prefixo, cai aqui.',
+      },
+      { status: 401 },
+    )
+  }
+
+  /*
+   * Informa o tamanho do que FOI ENVIADO, nunca o do segredo do servidor.
+   * Quem chamou já sabe o que mandou, então isto não revela nada a quem sonda
+   * — e resolve na hora os dois enganos mais comuns: o valor que veio cortado
+   * ao colar, e o que veio com aspas ou "Bearer" duplicado grudado.
+   */
   return NextResponse.json(
     {
       ok: false,
       error: 'nao_autorizado',
+      recebidos: motivo.recebidos,
       hint:
-        'O segredo enviado não confere com o CRON_SECRET deste ambiente. Confira se o valor ' +
-        'no agendador é idêntico ao da Vercel, e se a Vercel foi publicada depois de ele mudar.',
+        `O segredo chegou bem formado (${motivo.recebidos} caracteres) mas não confere com o ` +
+        'CRON_SECRET deste ambiente. Se esse número não bate com o tamanho do seu segredo, ' +
+        'ele foi cortado ou veio com algo grudado ao colar. Se bate, o valor da Vercel é ' +
+        'outro — variável alterada lá só vale depois de publicar de novo.',
     },
     { status: 401 },
   )
