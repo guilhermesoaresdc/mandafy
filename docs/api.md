@@ -55,7 +55,9 @@ Escopo: `messages:send`
   "channels": ["whatsapp", "email"],
   "variables": {
     "valor_cents": 4990,
-    "campanha": "Fiat Argo 2026",
+    "sorteio": "PTV 18h",
+    "palpite": "Elefante (grupo 11)",
+    "fecha_em": "2026-07-30T17:50:00-03:00",
     "link_pagamento": "https://…"
   },
   "schedule_in_seconds": 300,
@@ -68,7 +70,7 @@ existir, é criado.
 
 O envio passa pelo **mesmo caminho** de um disparo por fluxo: regras de guarda,
 compilação, ritmo de envio, janela de silêncio e fila. Não há atalho — a API
-furando as regras que protegem os números seria o oposto do que este sistema faz.
+furando as regras que protegem os chips seria o oposto do que este sistema faz.
 
 Resposta `202`:
 
@@ -111,7 +113,7 @@ use `POST /in/{token}`, que passa pelo mapeamento visual.
   "type": "order.paid",
   "external_id": "PED-12345",
   "contact": { "phone": "+5588999999999", "name": "Maria" },
-  "data": { "valor_cents": 4990, "campanha": "Fiat Argo 2026" }
+  "data": { "valor_cents": 4990, "sorteio": "PTV 18h", "palpite": "Elefante (grupo 11)" }
 }
 ```
 
