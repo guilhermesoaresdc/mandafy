@@ -1,15 +1,15 @@
 import { timingSafeEqual } from 'node:crypto'
-import { sql } from 'drizzle-orm'
 import { NextResponse, type NextRequest } from 'next/server'
-import { db } from '@/db'
 import { serverEnv } from '@/env'
 import { classifyDbError } from '@/lib/db-errors'
 import { tickDeEnvio } from '@/lib/delivery/tick'
 import { createLogger } from '@/lib/logger'
 import {
   manutencaoHoraria,
+  pegarTrava,
   precisaManutencao,
   precisaZerar,
+  soltarTrava,
   zerarContadoresDiarios,
 } from '@/lib/manutencao'
 
@@ -53,18 +53,18 @@ const log = createLogger('cron')
 /** Reserva para a resposta sair antes de a plataforma cortar a invocação. */
 const RESERVA_MS = 5_000
 
-/**
- * Trava do batimento.
+/*
+ * A TRAVA VIVE EM `lib/manutencao`, e não mais aqui.
  *
- * Duas invocações sobrepostas — um cron atrasado somado ao seguinte — fariam
- * trabalho repetido e, pior, atropelariam o espaçamento entre envios do mesmo
- * chip: cada invocação respeita o próprio ritmo, mas duas em paralelo dobram a
- * cadência que o §7.2 existe para segurar.
+ * Ela existe porque duas invocações sobrepostas — um cron atrasado somado ao
+ * seguinte — fariam trabalho repetido e, pior, atropelariam o espaçamento entre
+ * envios do mesmo chip: cada invocação respeita o próprio ritmo, mas duas em
+ * paralelo dobram a cadência que §7.2 existe para segurar.
  *
- * `try` e não `lock`: quem não pega desiste na hora em vez de esperar e
- * executar o dobro do trabalho depois.
+ * Era um `pg_try_advisory_lock` daqui mesmo, e foi o que parou o sistema
+ * inteiro: advisory lock é de SESSÃO, e atrás do pooler em modo transação quem
+ * pega não é quem solta. `pegarTrava`/`soltarTrava` explicam o caso completo.
  */
-const TRAVA = 8_270_120
 
 /**
  * Três desfechos, não dois.
@@ -263,11 +263,16 @@ async function bater(): Promise<NextResponse> {
 async function baterMesmo(): Promise<NextResponse> {
   const inicio = Date.now()
 
-  const [trava] = await db.execute<{ pego: boolean }>(
-    sql`SELECT pg_try_advisory_lock(${TRAVA}) AS pego`,
-  )
+  /*
+   * Trava por LINHA, não `pg_try_advisory_lock`.
+   *
+   * O advisory lock é de sessão, e atrás do pooler em modo transação a sessão
+   * que pega não é a mesma que solta — a trava ficava presa e todo batimento
+   * seguinte respondia "ocupado" com 200. Ver `pegarTrava` em lib/manutencao.
+   */
+  const pego = await pegarTrava()
 
-  if (!trava?.pego) {
+  if (!pego) {
     // 200, não 409: para o agendador isto não é erro, e responder erro faria
     // serviços como o QStash acumularem retentativas de algo que está certo.
     return NextResponse.json({ ok: true, ocupado: true })
@@ -333,7 +338,7 @@ async function baterMesmo(): Promise<NextResponse> {
 
     return NextResponse.json(resposta)
   } finally {
-    await db.execute(sql`SELECT pg_advisory_unlock(${TRAVA})`)
+    await soltarTrava()
   }
 }
 

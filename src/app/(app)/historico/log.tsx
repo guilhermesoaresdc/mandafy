@@ -64,8 +64,35 @@ const TOM: Record<NotificationStatus, string> = {
   skipped: 'text-pending',
 }
 
+/**
+ * Fuso da operação, e não o do navegador.
+ *
+ * `toLocaleTimeString` sem `timeZone` usa o relógio de quem está olhando. Um
+ * consultor viajando, ou um servidor em UTC, leria horários que não batem com
+ * os que a banca combinou com o cliente — e "saiu 17:47" viraria "saiu 20:47"
+ * sem nada explicando.
+ */
+const FUSO = 'America/Sao_Paulo'
+
 function hora(iso: string): string {
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour12: false, timeZone: 'America/Sao_Paulo' })
+  return new Date(iso).toLocaleTimeString('pt-BR', { hour12: false, timeZone: FUSO })
+}
+
+/**
+ * `05/08 17:47:45` — a DATA junto com a hora.
+ *
+ * O histórico mostra três dias, e mostrava só a hora. Duas linhas às 17:47 de
+ * dias diferentes ficavam idênticas na tela, e a lista, ordenada por data,
+ * parecia fora de ordem: 16:17, 15:47, 15:46, 14:52, 12:16, 11:50, **18:20**,
+ * 17:47 — o salto para trás é a virada do dia, invisível.
+ *
+ * O ano fica de fora de propósito: três dias nunca cruzam dois anos, e a coluna
+ * já é a mais estreita da tabela.
+ */
+function dataEHora(iso: string): string {
+  const d = new Date(iso)
+  const dia = d.toLocaleDateString('pt-BR', { timeZone: FUSO, day: '2-digit', month: '2-digit' })
+  return `${dia} ${hora(iso)}`
 }
 
 function latenciaTexto(linha: LinhaLog): string {
@@ -276,8 +303,8 @@ export function LogAoVivo({
                     }}
                     className="cursor-pointer border-b border-line/50 hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
                   >
-                    <td className="py-1 pr-2 pl-3 text-pending tabular-nums">
-                      {hora(linha.createdAt)}
+                    <td className="py-1 pr-2 pl-3 whitespace-nowrap text-pending tabular-nums">
+                      {dataEHora(linha.createdAt)}
                     </td>
                     <td className="py-1 pr-2">
                       <span style={{ color: `var(${CHANNEL_COLOR_VAR[linha.channel]})` }}>

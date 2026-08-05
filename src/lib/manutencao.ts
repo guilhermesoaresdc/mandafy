@@ -62,6 +62,103 @@ export async function registrarExecucao(
     })
 }
 
+/**
+ * A trava do batimento — e o motivo de ela NÃO ser um advisory lock (§7.1).
+ *
+ * O SINTOMA
+ *
+ * O cron chamava `/api/cron` a cada minuto, recebia `200 OK` em ~6 segundos,
+ * sem uma falha sequer — e nada acontecia. Evento recebido ficava "na fila"
+ * para sempre, o painel mostrava zero enviadas e zero na fila, e o histórico só
+ * tinha os envios de teste feitos à mão.
+ *
+ * A CAUSA
+ *
+ * `pg_try_advisory_lock` é uma trava de SESSÃO. Atrás do pooler da Supabase em
+ * modo transação — que é o modo obrigatório na Vercel — cada consulta pode cair
+ * numa sessão de backend diferente. Então:
+ *
+ *   1. o `SELECT pg_try_advisory_lock(…)` pega a trava na sessão A;
+ *   2. a conexão volta para o pool, e a sessão A CONTINUA com a trava;
+ *   3. o `pg_advisory_unlock` do `finally` cai na sessão B, devolve `false` e
+ *      não solta nada;
+ *   4. a sessão A guarda a trava enquanto viver no pool da Supabase;
+ *   5. todo batimento seguinte lê "ocupado", responde `{ok: true}` e volta.
+ *
+ * Duzentos, no minuto certo, sem fazer nada — a assinatura exata de uma falha
+ * silenciosa. E é o segundo problema deste projeto causado pelo mesmo pooler; o
+ * primeiro foram os prepared statements em `src/db/index.ts`.
+ *
+ * A TRAVA POR LINHA
+ *
+ * Uma linha em `system_state` com prazo de validade. Não depende de sessão,
+ * então funciona atrás de qualquer pooler — e se o processo morrer no meio, a
+ * trava vence sozinha em vez de ficar presa até alguém reiniciar o banco.
+ */
+const CHAVE_TRAVA = 'batimento.trava'
+
+/**
+ * Quanto tempo a trava vale sem ser renovada.
+ *
+ * Maior que o teto de execução da função (60s), para que um batimento lento não
+ * seja atropelado pelo seguinte; e curto o bastante para que um processo morto
+ * no meio não pare o sistema por mais de um ciclo ou dois.
+ */
+const VALIDADE_SEGUNDOS = 90
+
+/** Pega a trava, ou devolve `false` se outro batimento está em curso. */
+export async function pegarTrava(agora = new Date()): Promise<boolean> {
+  /*
+   * `INSERT … ON CONFLICT DO UPDATE … WHERE` num comando só, de propósito: ler
+   * e depois escrever abriria a janela em que dois batimentos leem "livre"
+   * antes de qualquer um gravar. O `WHERE` do `DO UPDATE` é avaliado sobre a
+   * linha já bloqueada pelo próprio `ON CONFLICT`, então a decisão é atômica.
+   *
+   * Sem linha devolvida = outro batimento tem a trava e ela ainda vale.
+   */
+  /*
+   * O corte vem calculado daqui, e não de `make_interval(secs => $n)` no SQL:
+   * ali o Postgres não consegue inferir o tipo do parâmetro dentro da notação
+   * nomeada e recusa a consulta inteira. Uma data pronta não tem essa dúvida —
+   * e lê melhor.
+   */
+  /*
+   * ISO com `::timestamptz`, e não o `Date` cru.
+   *
+   * Num `sql` bruto o driver não converte `Date` sozinho — ele recebe o objeto
+   * e estoura com "The string argument must be of type string". Quem converte é
+   * a camada de coluna do Drizzle, que aqui não está no caminho.
+   */
+  const marca = agora.toISOString()
+  const vencidaAntesDe = new Date(agora.getTime() - VALIDADE_SEGUNDOS * 1000).toISOString()
+
+  const linhas = await db.execute<{ pego: boolean }>(sql`
+    INSERT INTO system_state (key, ran_at)
+    VALUES (${CHAVE_TRAVA}, ${marca}::timestamptz)
+    ON CONFLICT (key) DO UPDATE
+      SET ran_at = ${marca}::timestamptz
+      WHERE system_state.ran_at < ${vencidaAntesDe}::timestamptz
+    RETURNING true AS pego
+  `)
+
+  return linhas.length > 0
+}
+
+/**
+ * Solta a trava.
+ *
+ * Empurra `ran_at` para o passado em vez de apagar a linha: apagar e reinserir
+ * gera mais lixo de vacuum, e uma linha com data antiga já significa "livre"
+ * para a consulta acima.
+ */
+export async function soltarTrava(): Promise<void> {
+  await db.execute(sql`
+    UPDATE system_state
+    SET ran_at = to_timestamp(0)
+    WHERE key = ${CHAVE_TRAVA}
+  `)
+}
+
 /** O dia civil no fuso de operação — `2026-08-01`. */
 export function diaLocal(momento: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
