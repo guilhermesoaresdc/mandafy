@@ -72,6 +72,16 @@ export type MappingResult =
 
 const CANONICAL = new Set<string>(CANONICAL_EVENTS)
 
+/**
+ * Onde a rota de entrada guarda o evento que veio na URL (`?evento=`).
+ *
+ * Chave reservada, com prefixo, porque ela convive dentro do payload da
+ * plataforma: o nome precisa ser um que nenhum sistema de sorteio use por
+ * acidente. O corpo original fica intacto ao lado — é ele que a tela de
+ * mapeamento mostra e é ele que o replay reexecuta.
+ */
+export const CHAVE_EVENTO_NA_URL = '_mandafy_evento'
+
 /** Extrai um campo, aplicando transformação e padrão. */
 function extract(payload: unknown, spec: z.output<typeof fieldSpec>): unknown {
   if (typeof spec === 'string') return getByPath(payload, spec)
@@ -112,7 +122,18 @@ export function applyMapping(payload: unknown, rawMapping: unknown): MappingResu
   }
   const mapping = parsed.data
 
-  const bruto = comoTexto(getByPath(payload, mapping.event_path))
+  /*
+   * O corpo primeiro, a URL como reserva.
+   *
+   * Nessa ordem porque acrescentar `?evento=` a uma integração que já funciona
+   * não pode mudar o que ela faz. A URL só responde quando o corpo cala — que é
+   * o caso das plataformas que cadastram uma URL por tipo de evento, onde o
+   * endereço É a declaração do que aconteceu.
+   */
+  const bruto =
+    comoTexto(getByPath(payload, mapping.event_path)) ??
+    comoTexto(getByPath(payload, `$.${CHAVE_EVENTO_NA_URL}`))
+
   if (!bruto) {
     return {
       ok: false,
