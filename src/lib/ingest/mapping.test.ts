@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyMapping, CHAVE_EVENTO_NA_URL, MAPEAMENTO_SUGERIDO } from './mapping'
+import { applyMapping, CHAVE_EVENTO_NA_URL, MAPEAMENTO_SUGERIDO, nomeDoEvento } from './mapping'
 
 /**
  * O mapeamento é o que torna o sistema plugável em qualquer plataforma sem
@@ -191,5 +191,43 @@ describe('evento declarado na URL', () => {
 
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.failure.reason).toBe('evento_nao_mapeado')
+  })
+})
+
+/**
+ * O nome do evento para a TELA (§4.2, passo 2).
+ *
+ * Sem depender do mapeamento: a tela de conexão existe para quem ainda não o
+ * configurou. Antes disto o passo 2 mostrava só a hora — "Último evento em
+ * 05/08/2026, 13:53:08" — e quem tinha acabado de criar uma conta de teste não
+ * tinha como saber se o que chegou foi o cadastro ou outra coisa qualquer.
+ */
+describe('nomeDoEvento', () => {
+  it('acha o nome nos apelidos que as plataformas usam', () => {
+    expect(nomeDoEvento({ event: 'qrcode_pago' })).toBe('qrcode_pago')
+    expect(nomeDoEvento({ evento: 'novo_usuario' })).toBe('novo_usuario')
+    expect(nomeDoEvento({ type: 'order.paid' })).toBe('order.paid')
+    expect(nomeDoEvento({ event_type: 'saque' })).toBe('saque')
+    expect(nomeDoEvento({ eventType: 'saque' })).toBe('saque')
+  })
+
+  it('cai para o nome declarado na URL quando o corpo cala', () => {
+    expect(nomeDoEvento({ [CHAVE_EVENTO_NA_URL]: 'bilhete_premiado' })).toBe('bilhete_premiado')
+  })
+
+  it('o corpo vence a URL, como no mapeamento', () => {
+    // As duas leituras têm de concordar: se divergissem, a tela mostraria um
+    // evento e o fluxo dispararia por outro.
+    expect(nomeDoEvento({ event: 'qrcode_pago', [CHAVE_EVENTO_NA_URL]: 'novo_usuario' })).toBe(
+      'qrcode_pago',
+    )
+  })
+
+  it('devolve nada quando não há nome, em vez de inventar', () => {
+    expect(nomeDoEvento({ data: { user: { id: 1 } } })).toBeNull()
+    expect(nomeDoEvento({ event: '   ' })).toBeNull()
+    expect(nomeDoEvento(null)).toBeNull()
+    expect(nomeDoEvento('texto')).toBeNull()
+    expect(nomeDoEvento([1, 2])).toBeNull()
   })
 })

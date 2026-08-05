@@ -37,6 +37,7 @@ import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import { db, withTenant } from '@/db'
 import { notifications, organizations, waInstances } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
+import { reprocessPending } from '@/lib/ingest/normalize'
 import { paraCadaOrg } from '@/lib/manutencao'
 import { processarEnvio } from './send'
 
@@ -57,11 +58,22 @@ export const BACKOFF_SEGUNDOS = [60, 300, 1800, 7200, 43_200] as const
  */
 const MARGEM_MS = 8_000
 
+/**
+ * Quantos eventos recém-chegados normalizar por passagem.
+ *
+ * Baixo de propósito: um evento pode disparar uma cascata de quatro passos em
+ * quatro canais, e tudo isso é escrita. O que sobrar fica para a próxima
+ * passagem — que vem em seguida, ao contrário da manutenção horária.
+ */
+const LIMITE_NORMALIZACAO = 50
+
 export type ResultadoTick = {
   enviados: number
   falhas: number
   jaProcessados: number
   reagendadosParaRetry: number
+  /** Eventos recém-chegados que viraram evento normalizado nesta passagem. */
+  normalizados: number
   /** Sobrou trabalho vencido que não coube no orçamento. */
   sobrou: boolean
 }
@@ -245,8 +257,34 @@ export async function tickDeEnvio(
     falhas: 0,
     jaProcessados: 0,
     reagendadosParaRetry: 0,
+    normalizados: 0,
     sobrou: false,
   }
+
+  /*
+   * O EVENTO QUE CHEGOU VIRA ENVIO AQUI, ANTES DE QUALQUER OUTRA COISA.
+   *
+   * A rota de ingestão grava em `events_raw` e enfileira no BullMQ em passos
+   * separados, de propósito: assim um Redis fora do ar não derruba o ACK que a
+   * plataforma espera. Quem consome essa fila é o worker.
+   *
+   * Numa publicação só na Vercel não há worker. A varredura de pendentes
+   * existia, mas morava na manutenção HORÁRIA — então o evento ficava parado
+   * até uma hora antes de virar evento normalizado e disparar fluxo. Um
+   * lembrete de PIX marcado para +5 minutos sairia com 65. Pior ainda: entre a
+   * chegada do evento e a manutenção seguinte, a tela de conexão não tinha o
+   * que mostrar, e quem acabou de conectar concluía que não estava funcionando.
+   *
+   * Aqui é barato: consulta indexada por `processed_at IS NULL`, que na maioria
+   * das passagens devolve zero linhas. O limite é baixo porque cada evento pode
+   * disparar uma cascata inteira, e o orçamento desta invocação é o mesmo que
+   * paga o envio logo abaixo.
+   *
+   * Sem risco de processar duas vezes quando o worker TAMBÉM estiver de pé:
+   * quem normaliza marca `processed_at`, e o índice único de `events` recusa a
+   * segunda gravação do mesmo evento.
+   */
+  resultado.normalizados = await reprocessPending(LIMITE_NORMALIZACAO)
 
   resultado.reagendadosParaRetry = await reativarFalhas(agora)
 

@@ -1,7 +1,7 @@
 import 'server-only'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db, withTenant, type Tx } from '@/db'
-import { contacts, events, eventsRaw, sources } from '@/db/schema'
+import { contacts, events } from '@/db/schema'
 import { createLogger } from '@/lib/logger'
 import { processarEvento } from '@/lib/flows/run'
 import { criarLeadDoEvento } from '@/lib/crm/criar-lead'
@@ -91,29 +91,40 @@ async function upsertContact(
 
 /** Processa um registro de `events_raw`. Idempotente por `rawId`. */
 export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome> {
-  const [raw] = await db
-    .select({
-      id: eventsRaw.id,
-      sourceId: eventsRaw.sourceId,
-      payload: eventsRaw.payload,
-      receivedAt: eventsRaw.receivedAt,
-      processedAt: eventsRaw.processedAt,
-    })
-    .from(eventsRaw)
-    .where(eq(eventsRaw.id, rawId))
-    .limit(1)
+  /*
+   * A leitura passa por função SECURITY DEFINER (drizzle/0023).
+   *
+   * Quem normaliza roda FORA de qualquer sessão — é o worker, ou a varredura do
+   * batimento. Sem `app.org_id`, a política de `sources` compara org_id com
+   * nulo e `events_raw` herda dela: o SELECT direto devolvia ZERO LINHAS, o
+   * código concluía `evento_cru_nao_encontrado`, e o evento ficava pendente
+   * para sempre. A tela dizia "recebido", o fluxo nunca disparava, e não havia
+   * erro em lugar nenhum. É a mesma parede de 0015 e 0016, um passo adiante.
+   */
+  const [bruto] = await db.execute<{
+    id: string
+    source_id: string | null
+    org_id: string
+    mapping: unknown
+    payload: unknown
+    received_at: string
+    processed_at: string | null
+  }>(sql`SELECT * FROM mandafy_evento_cru(${rawId})`)
 
-  if (!raw) return { status: 'erro', motivo: 'evento_cru_nao_encontrado' }
-  if (raw.processedAt) return { status: 'ignorado', motivo: 'ja_processado' }
-  if (!raw.sourceId) return { status: 'erro', motivo: 'sem_conector' }
+  if (!bruto) return { status: 'erro', motivo: 'evento_cru_nao_encontrado' }
+  if (bruto.processed_at) return { status: 'ignorado', motivo: 'ja_processado' }
+  if (!bruto.source_id) return { status: 'erro', motivo: 'sem_conector' }
 
-  const [source] = await db
-    .select({ id: sources.id, orgId: sources.orgId, mapping: sources.mapping })
-    .from(sources)
-    .where(eq(sources.id, raw.sourceId))
-    .limit(1)
-
-  if (!source) return { status: 'erro', motivo: 'conector_removido' }
+  const raw = {
+    id: Number(bruto.id),
+    payload: comoObjeto(bruto.payload),
+    receivedAt: new Date(bruto.received_at),
+  }
+  const source = {
+    id: bruto.source_id,
+    orgId: bruto.org_id,
+    mapping: comoObjeto(bruto.mapping),
+  }
 
   const resultado = applyMapping(raw.payload, source.mapping)
 
@@ -121,10 +132,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
     // Evento que não interessa não é falha: a plataforma manda tudo, e o mapa
     // define o que o sistema entende. Fica registrado para a tela de conexão
     // mostrar o que está chegando e não sendo aproveitado.
-    await db
-      .update(eventsRaw)
-      .set({ processedAt: new Date(), error: `${resultado.failure.reason}: ${resultado.failure.detail}` })
-      .where(eq(eventsRaw.id, rawId))
+    await marcarProcessado(rawId, `${resultado.failure.reason}: ${resultado.failure.detail}`)
 
     return { status: 'ignorado', motivo: resultado.failure.reason }
   }
@@ -161,7 +169,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
       },
     )
 
-    await db.update(eventsRaw).set({ processedAt: new Date() }).where(eq(eventsRaw.id, rawId))
+    await marcarProcessado(rawId, null)
 
     if (!eventId) return { status: 'ignorado', motivo: 'evento_duplicado' }
 
@@ -237,7 +245,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
     }
   } catch (error) {
     const motivo = error instanceof Error ? error.message : String(error)
-    await db.update(eventsRaw).set({ error: motivo.slice(0, 500) }).where(eq(eventsRaw.id, rawId))
+    await marcarProcessado(rawId, motivo.slice(0, 500))
     log.error('falha ao normalizar', { rawId, reason: motivo })
     return { status: 'erro', motivo }
   }
@@ -251,17 +259,56 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
  * é o que garante que ele acabe processado.
  */
 export async function reprocessPending(limite = 100): Promise<number> {
-  const pendentes = await db
-    .select({ id: eventsRaw.id })
-    .from(eventsRaw)
-    .where(and(isNull(eventsRaw.processedAt), isNull(eventsRaw.error)))
-    .limit(limite)
+  /*
+   * Também por função (drizzle/0023), e pelo mesmo motivo do resto: sem
+   * contexto de tenant esta consulta devolvia zero linhas e a varredura
+   * concluía que não havia nada pendente. Ela rodava desde sempre, sem nunca
+   * ter processado um evento — a falha mais silenciosa possível, porque o
+   * número zero é indistinguível de "estava tudo em dia".
+   */
+  const pendentes = await db.execute<{ id: string }>(
+    sql`SELECT id FROM mandafy_eventos_crus_pendentes(${limite})`,
+  )
 
   let processados = 0
   for (const pendente of pendentes) {
-    const resultado = await normalizeRawEvent(pendente.id)
+    const resultado = await normalizeRawEvent(Number(pendente.id))
     if (resultado.status === 'processado') processados += 1
   }
 
   return processados
+}
+
+/**
+ * `jsonb` vindo de função volta como TEXTO, não como objeto.
+ *
+ * Lendo a coluna direto, o driver conhece o tipo e entrega o objeto pronto.
+ * Lendo o retorno de uma função, ele recebe o valor sem o OID da coluna e
+ * devolve a string crua. O sintoma foi `mapeamento_invalido` em todo evento —
+ * "esperava objeto, recebi string" —, que na tela vira "chegou, mas não foi
+ * aproveitado" e manda a pessoa mexer no passo 3, onde não há nada errado.
+ *
+ * Aceita os dois formatos porque o mesmo módulo serve aos dois caminhos, e
+ * porque um `JSON.parse` que estoura aqui derrubaria a normalização inteira.
+ */
+function comoObjeto(valor: unknown): unknown {
+  if (typeof valor !== 'string') return valor
+  try {
+    return JSON.parse(valor)
+  } catch {
+    return valor
+  }
+}
+
+/**
+ * Marca o evento cru como processado — e é o UPDATE mais crítico do caminho.
+ *
+ * Sem ele o evento continua pendente, a varredura o pega de novo na passagem
+ * seguinte, e o fluxo dispara outra vez: mensagem repetida para o mesmo
+ * cliente, sem nada na tela sugerindo o porquê. Por isso ele passa pela função
+ * SECURITY DEFINER como todo o resto — um UPDATE recusado pelo RLS não
+ * levanta erro, atualiza zero linhas e devolve sucesso.
+ */
+async function marcarProcessado(rawId: number, erro: string | null): Promise<void> {
+  await db.execute(sql`SELECT mandafy_marcar_evento_cru(${rawId}, ${erro})`)
 }

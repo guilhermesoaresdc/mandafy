@@ -82,6 +82,31 @@ const CANONICAL = new Set<string>(CANONICAL_EVENTS)
  */
 export const CHAVE_EVENTO_NA_URL = '_mandafy_evento'
 
+/**
+ * O nome que a plataforma deu ao evento, sem depender do mapeamento.
+ *
+ * A tela de conexão precisa dizer O QUE chegou antes de a tradução existir —
+ * é justamente para quem ainda não configurou que ela serve. Antes disto o
+ * passo 2 mostrava só a hora: quem tinha acabado de criar uma conta de teste
+ * não tinha como saber se o que chegou foi o cadastro ou outra coisa.
+ *
+ * A ordem segue a de `applyMapping`: primeiro os nomes usuais do corpo, depois
+ * a chave da URL como reserva. Os apelidos vêm de plataformas reais — cada uma
+ * chama esse campo de um jeito.
+ */
+export function nomeDoEvento(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const objeto = payload as Record<string, unknown>
+
+  for (const chave of ['event', 'evento', 'type', 'tipo', 'event_type', 'eventType']) {
+    const valor = objeto[chave]
+    if (typeof valor === 'string' && valor.trim() !== '') return valor.trim()
+  }
+
+  const daUrl = objeto[CHAVE_EVENTO_NA_URL]
+  return typeof daUrl === 'string' && daUrl.trim() !== '' ? daUrl.trim() : null
+}
+
 /** Extrai um campo, aplicando transformação e padrão. */
 function extract(payload: unknown, spec: z.output<typeof fieldSpec>): unknown {
   if (typeof spec === 'string') return getByPath(payload, spec)

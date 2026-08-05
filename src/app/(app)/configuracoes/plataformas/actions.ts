@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { withTenant } from '@/db'
 import { eventsRaw, sources } from '@/db/schema'
+import { nomeDoEvento } from '@/lib/ingest/mapping'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { mappingSchema, MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
@@ -139,9 +140,24 @@ export async function alternarPlataformaAction(formData: FormData): Promise<void
  * primeiro que chegar". Mostrar o payload de verdade é o que permite arrastar
  * campos reais em vez de digitar JSONPath de cabeça.
  */
-export async function ultimoPayload(
-  sourceId: string,
-): Promise<{ payload: unknown; recebidoEm: Date; erro: string | null } | null> {
+export type UltimoEvento = {
+  payload: unknown
+  recebidoEm: Date
+  erro: string | null
+  /**
+   * O que a plataforma chamou o evento — o nome DELA, não o canônico.
+   *
+   * Sai de onde o mapeamento o procuraria: o caminho configurado, ou a chave
+   * que a rota grava quando o nome veio na URL. É a informação que faltava na
+   * tela: "recebido, 13:53:08" não diz se chegou o cadastro de conta ou o
+   * pagamento, e é exatamente isso que quem está testando precisa conferir.
+   */
+  nome: string | null
+  /** `null` enquanto ainda não foi processado. */
+  processadoEm: Date | null
+}
+
+export async function ultimoPayload(sourceId: string): Promise<UltimoEvento | null> {
   const user = await requireAdmin()
 
   return withTenant(tenantOf(user), async (tx) => {
@@ -149,6 +165,7 @@ export async function ultimoPayload(
       .select({
         payload: eventsRaw.payload,
         receivedAt: eventsRaw.receivedAt,
+        processedAt: eventsRaw.processedAt,
         error: eventsRaw.error,
       })
       .from(eventsRaw)
@@ -157,6 +174,13 @@ export async function ultimoPayload(
       .limit(1)
 
     if (!linha) return null
-    return { payload: linha.payload, recebidoEm: linha.receivedAt, erro: linha.error }
+
+    return {
+      payload: linha.payload,
+      recebidoEm: linha.receivedAt,
+      processadoEm: linha.processedAt,
+      erro: linha.error,
+      nome: nomeDoEvento(linha.payload),
+    }
   })
 }
