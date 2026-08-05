@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
-import { drizzle } from 'drizzle-orm/postgres-js'
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { usesTransactionPooler } from './index'
 import * as schema from './schema'
@@ -41,6 +41,23 @@ import { MENSAGENS, type ModeloMensagem } from '@/lib/messages/modelos'
  * Sem a flag ele lista o que faria e sai. Um comando que reescreve o texto que
  * sai para o cliente não deve ser executável por engano — e o relatório é a
  * parte útil de qualquer forma.
+ *
+ * DUAS PORTAS PARA O MESMO TRABALHO
+ *
+ * `reaplicarNaConexao` faz o serviço sobre uma conexão que alguém já abriu.
+ * Quem chama decide o resto:
+ *
+ *   `reaplicarModelos`      → o comando. Abre conexão de DONO, exige o papel
+ *                             dono e trabalha em TODAS as organizações.
+ *   `reaplicarNaConexao`    → o botão da tela. Recebe o `Tx` do `withTenant` e
+ *                             o `orgId` da sessão, com RLS aplicado.
+ *
+ * A separação existe porque a alternativa já falhou uma vez neste arquivo, e de
+ * novo em `seed-org.ts`: um botão de painel que abre a própria conexão de dono
+ * ou precisa de `DATABASE_URL_ADMIN` é um botão que não funciona na hospedagem
+ * de quem opera pelo navegador — lá existe uma variável de banco só, e ela
+ * aponta para o papel da aplicação. O comando continua sendo o comando; a tela
+ * passa a usar a conexão que ela já tem.
  */
 
 /**
@@ -147,6 +164,131 @@ async function exigirPapelDono(sql: postgres.Sql): Promise<void> {
   )
 }
 
+/**
+ * O tipo largo, e não o `Tx` do `withTenant` — mesmo motivo de `seed-org.ts`.
+ *
+ * Um `Tx` é estruturalmente um `PostgresJsDatabase`, mas não o contrário. Com o
+ * tipo estreito esta função serviria ao botão e recusaria a conexão de dono que
+ * o comando abre, e voltaríamos a ter duas cópias da mesma lógica de
+ * reaplicação — que é exatamente o tipo de divergência que a suíte de modelos
+ * existe para impedir.
+ */
+type Db = PostgresJsDatabase<typeof schema>
+
+/**
+ * Reaplica o catálogo sobre uma conexão já aberta.
+ *
+ * `orgId` restringe a UMA organização. O comando não passa nada — ele roda como
+ * dono e a intenção é atualizar a instalação inteira. O botão da tela passa
+ * sempre, e não por educação: com o RLS aplicado, uma escrita fora do tenant
+ * não daria erro, ela atualizaria ZERO linhas e o relatório diria que deu certo.
+ */
+export async function reaplicarNaConexao(
+  db: Db,
+  aplicar: boolean,
+  orgId?: string,
+): Promise<Resultado[]> {
+  const resultados: Resultado[] = []
+  const daOrg = (coluna: typeof messages.key, valor: string) =>
+    orgId ? and(eq(coluna, valor), eq(messages.orgId, orgId)) : eq(coluna, valor)
+
+  for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+    const { mensagem, variantes } = linhasDoModelo(modelo)
+
+    /*
+     * Cada linha é decidida pelo próprio corpo, então uma organização que editou
+     * o texto continua intocada mesmo quando o comando varre todas.
+     */
+    const linhas = await db
+      .select({ id: messages.id, orgId: messages.orgId, body: messages.body })
+      .from(messages)
+      .where(daOrg(messages.key, modelo.key))
+
+    if (linhas.length === 0) {
+      resultados.push({ key: modelo.key, nome: modelo.name, desfecho: 'ausente' })
+      continue
+    }
+
+    for (const linha of linhas) {
+      const desfecho = classificar(mensagem.body, linha.body, modelo.key)
+
+      if (desfecho !== 'reaplicado') {
+        resultados.push({ key: modelo.key, nome: modelo.name, desfecho })
+        continue
+      }
+
+      if (aplicar) {
+        await db
+          .update(messages)
+          .set({
+            name: mensagem.name,
+            category: mensagem.category,
+            body: mensagem.body,
+            ignoreQuietHours: mensagem.ignoreQuietHours,
+            ...(mensagem.description ? { description: mensagem.description } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(messages.id, linha.id))
+
+        /*
+         * As variantes vão junto, e precisam: o assunto do e-mail, o corpo do
+         * SMS e o botão do Telegram fazem parte da mensagem. Atualizar só o
+         * corpo deixaria o assunto falando de campanha enquanto o texto fala
+         * de aposta — pior que não atualizar nada.
+         *
+         * `enabled` fica de FORA. Ligar e desligar canal é decisão de operação,
+         * e o comando não tem o direito de religar um SMS que alguém desligou
+         * de propósito por causa do custo.
+         */
+        for (const variante of variantes) {
+          await db
+            .update(messageVariants)
+            .set({
+              synced: variante.synced ?? true,
+              body: variante.body ?? null,
+              subject: variante.subject ?? null,
+              preheader: variante.preheader ?? null,
+              textBody: variante.textBody ?? null,
+              buttons: variante.buttons ?? null,
+              stripAccents: variante.stripAccents ?? false,
+              ...(variante.parseMode ? { parseMode: variante.parseMode } : {}),
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(messageVariants.messageId, linha.id),
+                eq(messageVariants.channel, variante.channel),
+              ),
+            )
+        }
+      }
+
+      resultados.push({ key: modelo.key, nome: modelo.name, desfecho: 'reaplicado' })
+    }
+  }
+
+  /*
+   * Chaves que o catálogo já teve e não tem mais. `HISTORICOS` é a lista de
+   * tudo que o seed um dia escreveu, então o que está lá e não está em
+   * `MENSAGENS` é exatamente um modelo aposentado.
+   */
+  const vivas = new Set(MENSAGENS.map((m) => m.key as string))
+  for (const key of Object.keys(HISTORICOS)) {
+    if (vivas.has(key)) continue
+
+    const linhas = await db
+      .select({ name: messages.name })
+      .from(messages)
+      .where(daOrg(messages.key, key))
+
+    for (const linha of linhas) {
+      resultados.push({ key, nome: linha.name, desfecho: 'orfa' })
+    }
+  }
+
+  return resultados
+}
+
 export async function reaplicarModelos(
   aplicar: boolean,
   /** Sobrescreve o endereço. Existe para o teste, que não usa o ambiente. */
@@ -159,109 +301,12 @@ export async function reaplicarModelos(
     onnotice: () => {},
   })
   const db = drizzle(sql, { schema })
-  const resultados: Resultado[] = []
 
   try {
     await exigirPapelDono(sql)
-
-    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
-      const { mensagem, variantes } = linhasDoModelo(modelo)
-
-      /*
-       * Sem contexto de tenant e sem filtro por organização: o comando roda com
-       * o papel dono das tabelas, como o seed e as migrations, e a intenção é
-       * atualizar TODAS as organizações da instalação. Cada linha é decidida
-       * pelo próprio corpo, então uma organização que editou o texto continua
-       * intocada mesmo aqui.
-       */
-      const linhas = await db
-        .select({ id: messages.id, orgId: messages.orgId, body: messages.body })
-        .from(messages)
-        .where(eq(messages.key, modelo.key))
-
-      if (linhas.length === 0) {
-        resultados.push({ key: modelo.key, nome: modelo.name, desfecho: 'ausente' })
-        continue
-      }
-
-      for (const linha of linhas) {
-        const desfecho = classificar(mensagem.body, linha.body, modelo.key)
-
-        if (desfecho !== 'reaplicado') {
-          resultados.push({ key: modelo.key, nome: modelo.name, desfecho })
-          continue
-        }
-
-        if (aplicar) {
-          await db
-            .update(messages)
-            .set({
-              name: mensagem.name,
-              category: mensagem.category,
-              body: mensagem.body,
-              ignoreQuietHours: mensagem.ignoreQuietHours,
-              ...(mensagem.description ? { description: mensagem.description } : {}),
-              updatedAt: new Date(),
-            })
-            .where(eq(messages.id, linha.id))
-
-          /*
-           * As variantes vão junto, e precisam: o assunto do e-mail, o corpo do
-           * SMS e o botão do Telegram fazem parte da mensagem. Atualizar só o
-           * corpo deixaria o assunto falando de campanha enquanto o texto fala
-           * de aposta — pior que não atualizar nada.
-           *
-           * `enabled` fica de FORA. Ligar e desligar canal é decisão de operação,
-           * e o comando não tem o direito de religar um SMS que alguém desligou
-           * de propósito por causa do custo.
-           */
-          for (const variante of variantes) {
-            await db
-              .update(messageVariants)
-              .set({
-                synced: variante.synced ?? true,
-                body: variante.body ?? null,
-                subject: variante.subject ?? null,
-                preheader: variante.preheader ?? null,
-                textBody: variante.textBody ?? null,
-                buttons: variante.buttons ?? null,
-                stripAccents: variante.stripAccents ?? false,
-                ...(variante.parseMode ? { parseMode: variante.parseMode } : {}),
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(messageVariants.messageId, linha.id),
-                  eq(messageVariants.channel, variante.channel),
-                ),
-              )
-          }
-        }
-
-        resultados.push({ key: modelo.key, nome: modelo.name, desfecho: 'reaplicado' })
-      }
-    }
-
-    /*
-     * Chaves que o catálogo já teve e não tem mais. `HISTORICOS` é a lista de
-     * tudo que o seed um dia escreveu, então o que está lá e não está em
-     * `MENSAGENS` é exatamente um modelo aposentado.
-     */
-    const vivas = new Set(MENSAGENS.map((m) => m.key as string))
-    for (const key of Object.keys(HISTORICOS)) {
-      if (vivas.has(key)) continue
-
-      const linhas = await db
-        .select({ name: messages.name })
-        .from(messages)
-        .where(eq(messages.key, key))
-
-      for (const linha of linhas) {
-        resultados.push({ key, nome: linha.name, desfecho: 'orfa' })
-      }
-    }
-
-    return resultados
+    // Sem `orgId`: o comando roda com o papel dono, como o seed e as
+    // migrations, e a intenção é atualizar TODAS as organizações.
+    return await reaplicarNaConexao(db, aplicar)
   } finally {
     await sql.end({ timeout: 5 })
   }
