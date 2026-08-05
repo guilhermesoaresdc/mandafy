@@ -2,7 +2,7 @@
 
 import { CHANNEL_LABELS, type Channel } from '@/db/schema/enums'
 import { ChannelIcon } from '@/components/ui'
-import { resumoContador } from '@/lib/messages/gsm'
+import { cortarParaSegmentos, resumoContador, SEGMENTOS_MAX } from '@/lib/messages/gsm'
 import type { Compilacao } from '@/lib/messages/compile'
 import { cn } from '@/lib/utils'
 
@@ -168,7 +168,18 @@ export function PreviaEmail({
 
 export function PreviaSms({ compilacao, ...slots }: { compilacao: Compilacao } & SlotsPrevia) {
   const contagem = compilacao.ok ? compilacao.sms : undefined
-  const caro = (contagem?.segmentos ?? 0) > 1
+  const caro = (contagem?.segmentos ?? 0) > SEGMENTOS_MAX
+
+  /*
+   * O que o cliente REALMENTE receberia, com o teto de custo aplicado.
+   *
+   * A prévia mostra o texto inteiro de propósito — é assim que quem escreve vê
+   * que passou. Mas mostrar só isso mentiria na outra ponta: no envio, o que
+   * excede é cortado. Sem esta linha, alguém escreveria 300 caracteres, veria
+   * os 300 na tela, e descobriria o corte pelo cliente reclamando.
+   */
+  const cortado =
+    compilacao.ok && caro ? cortarParaSegmentos(compilacao.corpo).texto : null
 
   return (
     <Moldura
@@ -184,9 +195,29 @@ export function PreviaSms({ compilacao, ...slots }: { compilacao: Compilacao } &
       }
     >
       {compilacao.ok ? (
-        <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-ink">
-          {compilacao.corpo}
-        </p>
+        <>
+          <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-ink">
+            {compilacao.corpo}
+          </p>
+
+          {cortado ? (
+            <div className="mt-3 rounded-lg border border-fail/40 px-2.5 py-2">
+              <p className="text-2xs text-fail">
+                Passou de {SEGMENTOS_MAX === 1 ? 'um segmento' : `${SEGMENTOS_MAX} segmentos`} — o
+                SMS se cobra por pedaço, e o que sobra {contagem ? `custaria ${contagem.segmentos}×` : 'dobra a conta'}.
+              </p>
+              <p className="mt-1.5 text-2xs text-ink-2">
+                Para não cobrar a mais, o envio corta aqui:
+              </p>
+              <p className="mt-1 text-2xs leading-relaxed break-words whitespace-pre-wrap text-ink-2">
+                {cortado}
+              </p>
+              <p className="mt-1.5 text-2xs text-pending">
+                Encurte o texto para escolher você mesmo o que fica.
+              </p>
+            </div>
+          ) : null}
+        </>
       ) : (
         <Falha compilacao={compilacao} />
       )}

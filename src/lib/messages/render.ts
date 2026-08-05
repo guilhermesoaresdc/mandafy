@@ -13,6 +13,14 @@ export type OpcoesSms = {
   /** Encurta o link e devolve a URL curta. Sem isso, a URL vai inteira. */
   encurtar?: (url: string) => string
   removerAcentuacao?: boolean
+  /**
+   * Teto de segmentos deste envio. Omitido, vale `SEGMENTOS_MAX` (um).
+   *
+   * Existe como parâmetro, e não como constante no ponto de uso, porque um dia
+   * uma mensagem vai justificar dois segmentos — e nesse dia a decisão tem de
+   * ser explícita, por mensagem, e não uma constante trocada para todo mundo.
+   */
+  segmentosMax?: number
 }
 
 // ── Utilidades comuns ────────────────────────────────────────────────────────

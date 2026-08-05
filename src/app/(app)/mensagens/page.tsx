@@ -3,7 +3,8 @@ import Link from 'next/link'
 import { withTenant } from '@/db'
 import { listarMensagens } from '@/db/queries/messages'
 import { SessionFrame } from '@/components/shell/app-shell'
-import { Badge, Button, Card, CardBody, ChannelPad, EmptyState } from '@/components/ui'
+import { Badge, Button, Card, CardBody, EmptyState } from '@/components/ui'
+import { PadCanalMensagem } from './[id]/pad-canal'
 import { CHANNELS, MESSAGE_CATEGORY_LABELS } from '@/db/schema/enums'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { resumoDosModelos } from '@/lib/messages/galeria'
@@ -57,14 +58,23 @@ export default async function MensagensPage() {
                   </p>
                 </div>
 
-                {/* Só leitura: liga e desliga acontece dentro da mensagem. */}
+                {/*
+                  Os pads LIGAM E DESLIGAM daqui também.
+                  Eram só leitura, com o comentário "liga e desliga acontece
+                  dentro da mensagem" — verdadeiro e invisível. Na tela eles são
+                  idênticos aos do editor: mesma cor, mesmo brilho, mesmo
+                  formato de interruptor. Quem clicava concluía que o sistema
+                  estava quebrado, e não que aquele controle específico era
+                  enfeite. Um pad que parece um interruptor precisa ser um.
+                */}
                 <div className="hidden items-center gap-1 sm:flex">
                   {CHANNELS.map((canal) => (
-                    <ChannelPad
+                    <PadCanalMensagem
                       key={canal}
-                      channel={canal}
-                      on={mensagem.canaisAtivos.includes(canal)}
-                      label=""
+                      messageId={mensagem.id}
+                      canal={canal}
+                      ligado={mensagem.canaisAtivos.includes(canal)}
+                      rotulo=""
                       className="px-2 py-1"
                     />
                   ))}

@@ -1,7 +1,7 @@
 import type { Channel } from '@/db/schema/enums'
 import type { Bloco, No } from './ast'
 import { variaveisUsadas } from './ast'
-import { contarSms, type ContagemSms } from './gsm'
+import { contarSms, cortarParaSegmentos, type ContagemSms } from './gsm'
 import { parseMensagem } from './parse'
 import { renderEmail, renderSms, renderTelegram, renderWhatsapp, type OpcoesSms } from './render'
 import { resolverSpintax, sementeDeTexto } from './spintax'
@@ -125,7 +125,23 @@ export function compilar(fonte: string, opcoes: OpcoesCompilacao): Compilacao {
     }
 
     case 'sms': {
-      const corpo = renderSms(blocos, opcoes.sms ?? {})
+      const bruto = renderSms(blocos, opcoes.sms ?? {})
+
+      /*
+       * O TETO DE CUSTO, aplicado depois das variáveis e antes da contagem.
+       *
+       * Aqui é o único ponto por onde todo SMS passa — a prévia do editor, o
+       * envio de teste e a fila de produção chamam esta mesma função. Pôr o
+       * corte no adaptador do provedor deixaria a prévia mentindo sobre o que
+       * vai sair; pô-lo só na tela não protegeria o envio, que é onde a
+       * variável ganha valor e o texto cresce.
+       *
+       * A prévia NÃO corta: quem está escrevendo precisa ver o excesso para
+       * poder encurtar, e um texto que se corta sozinho na tela esconde
+       * exatamente o problema que o contador ao lado está denunciando.
+       */
+      const corpo = previa ? bruto : cortarParaSegmentos(bruto, opcoes.sms?.segmentosMax).texto
+
       return { ok: true, canal: 'sms', corpo, sms: contarSms(corpo) }
     }
   }

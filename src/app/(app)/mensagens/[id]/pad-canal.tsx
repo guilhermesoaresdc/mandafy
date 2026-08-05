@@ -30,10 +30,15 @@ export function PadCanalMensagem({
   messageId,
   canal,
   ligado,
+  rotulo,
+  className,
 }: {
   messageId: string
   canal: Channel
   ligado: boolean
+  /** `""` encolhe o pad ao ícone — é a forma usada na lista de mensagens. */
+  rotulo?: string
+  className?: string
 }) {
   const [, iniciar] = useTransition()
   const [ligadoOtimista, definirOtimista] = useOptimistic(ligado)
@@ -50,5 +55,13 @@ export function PadCanalMensagem({
     })
   }
 
-  return <ChannelPad channel={canal} on={ligadoOtimista} onChange={alternar} />
+  return (
+    <ChannelPad
+      channel={canal}
+      on={ligadoOtimista}
+      onChange={alternar}
+      {...(rotulo !== undefined ? { label: rotulo } : {})}
+      {...(className ? { className } : {})}
+    />
+  )
 }
