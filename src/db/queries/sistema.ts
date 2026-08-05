@@ -75,7 +75,14 @@ export async function estadoDoRls(): Promise<EstadoRls> {
 }
 
 export type EstadoSistema = {
-  migrations: { pendentes: string[]; aplicadas: number; total: number }
+  migrations: {
+    pendentes: string[]
+    aplicadas: number
+    total: number
+    /** Papel com que as migrations seriam aplicadas, e se ele pode. */
+    papel: string
+    podeAplicar: boolean
+  }
   rls: EstadoRls
   batimento: {
     /** `null` = nunca rodou. É o sinal de que ninguém está chamando /api/cron. */
@@ -90,7 +97,7 @@ export type EstadoSistema = {
 
 export async function estadoDoSistema(): Promise<EstadoSistema> {
   const vazio: EstadoSistema = {
-    migrations: { pendentes: [], aplicadas: 0, total: 0 },
+    migrations: { pendentes: [], aplicadas: 0, total: 0, papel: '?', podeAplicar: false },
     rls: { papelExiste: false, papelAtual: '?', ignoraPoliticas: false, tabelasComRls: 0 },
     batimento: { ultimaManutencao: null, ultimaZeragem: null, configurado: false },
     fila: { vencidos: 0, futuros: 0, esperaMaxSegundos: 0 },

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { withTenant } from '@/db'
-import { runMigrations } from '@/db/migrate'
+import { explicarFalha, runMigrations } from '@/db/migrate'
 import { reaplicarNaConexao, type Desfecho } from '@/db/reaplicar-modelos'
 import { seedFlows } from '@/db/seed-flows'
 import { semearFunilPadrao, semearRitmos } from '@/db/seed-org'
@@ -52,11 +52,15 @@ export async function migrarAction(): Promise<EstadoAcao> {
           : `${r.aplicadas.length} migration(s) aplicada(s): ${r.aplicadas.join(', ')}.`,
     }
   } catch (erro) {
-    // A mensagem do Postgres vai para a tela porque é ela que diz o que fazer,
-    // e erro de esquema não carrega dado pessoal (§14.1).
+    /*
+     * A mensagem do Postgres vai para a tela porque é ela que diz o que fazer,
+     * e erro de esquema não carrega dado pessoal (§14.1). Mas ela sozinha não
+     * basta: "permission denied for schema public" é exato, correto e mudo para
+     * quem opera pelo navegador. `explicarFalha` acrescenta a causa e o passo.
+     */
     const mensagem = erro instanceof Error ? erro.message : 'falha desconhecida'
     log.error('falha ao migrar pelo painel', { reason: mensagem.slice(0, 160) })
-    return { erro: mensagem.slice(0, 400) }
+    return { erro: explicarFalha(erro).slice(0, 700) }
   }
 }
 

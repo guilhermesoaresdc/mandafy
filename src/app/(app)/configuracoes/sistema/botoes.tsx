@@ -42,8 +42,15 @@ export function BotaoDeSistema({
         <p className="rounded-lg border border-ok/40 px-3 py-2 text-2xs text-ok">{estado.ok}</p>
       ) : null}
 
+      {/*
+        `whitespace-pre-line` porque a explicação de uma falha tem parágrafos: a
+        primeira linha é o que o Postgres disse, e as seguintes são o que fazer a
+        respeito. Espremidas num bloco só de fonte monoespaçada, elas viram
+        exatamente o tipo de parede de texto que ninguém lê — e a parte que
+        importa é a última.
+      */}
       {estado.erro ? (
-        <p className="rounded-lg border border-fail/40 px-3 py-2 font-mono text-2xs text-fail">
+        <p className="whitespace-pre-line rounded-lg border border-fail/40 px-3 py-2 text-2xs text-fail">
           {estado.erro}
         </p>
       ) : null}
