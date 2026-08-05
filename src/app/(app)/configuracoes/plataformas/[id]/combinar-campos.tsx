@@ -30,17 +30,34 @@ function caminhoDe(spec: unknown): string {
 }
 
 /**
- * O que foi salvo vence; o palpite preenche o que ficou vazio.
+ * O que foi salvo vence; o palpite preenche o resto.
  *
  * Nessa ordem porque a pessoa é a autoridade sobre o próprio mapeamento: um
  * palpite que sobrescreve escolha manual desfaz trabalho e destrói a confiança
  * na tela inteira.
+ *
+ * COM UMA EXCEÇÃO, E ELA É O CASO COMUM
+ *
+ * Caminho salvo que NÃO EXISTE no evento recebido não conta como escolha. Toda
+ * plataforma nasce com o mapeamento sugerido já gravado, e ele descreve um
+ * formato aninhado (`$.data.user.name`). Numa plataforma que manda tudo plano,
+ * esses caminhos apontam para o nada: a tela já os recusava — mostrava
+ * "— não usar —" com "— não encontrado" embaixo — e o palpite ficava bloqueado
+ * por um valor que ninguém escolheu e que a própria tela não exibia.
+ *
+ * Era o bug que tornaria a detecção inútil justamente onde ela mais serve.
  */
 function comPalpites(
   salvo: Record<string, unknown>,
   palpites: Record<string, { caminho: string }>,
+  existe: (caminho: string) => boolean,
 ): Record<string, string> {
-  const saida = Object.fromEntries(Object.entries(salvo).map(([k, v]) => [k, caminhoDe(v)]))
+  const saida: Record<string, string> = {}
+
+  for (const [chave, valor] of Object.entries(salvo)) {
+    const caminho = caminhoDe(valor)
+    if (caminho && existe(caminho)) saida[chave] = caminho
+  }
 
   for (const [chave, palpite] of Object.entries(palpites)) {
     if (!saida[chave]) saida[chave] = palpite.caminho
@@ -98,25 +115,38 @@ export function CombinarCampos({
       : salvo
   })
 
+  /*
+   * Sem evento recebido não há como saber se um caminho existe — e aí o salvo
+   * vale integralmente, que é o certo: quem preencheu à mão antes do primeiro
+   * evento não pode perder o trabalho por falta de prova.
+   */
+  const existe = (caminho: string) =>
+    !payload || getByPath(payload, caminho) !== undefined
+
   const [contato, setContato] = useState<Record<string, string>>(() =>
-    comPalpites(inicial.contact ?? {}, detectado.contato),
+    comPalpites(inicial.contact ?? {}, detectado.contato, existe),
   )
   const [campos, setCampos] = useState<Record<string, string>>(() =>
-    comPalpites(inicial.fields ?? {}, detectado.campos),
+    comPalpites(inicial.fields ?? {}, detectado.campos, existe),
   )
 
   /** Quantos campos a tela preencheu sozinha, para poder dizer isso em voz alta. */
   const quantosPalpites = useMemo(() => {
-    const salvos = new Set([
-      ...Object.keys(inicial.contact ?? {}),
-      ...Object.keys(inicial.fields ?? {}),
-    ])
+    const util = (registro: Record<string, unknown>) =>
+      Object.entries(registro)
+        .filter(([, v]) => {
+          const caminho = caminhoDe(v)
+          return caminho && (!payload || getByPath(payload, caminho) !== undefined)
+        })
+        .map(([k]) => k)
+
+    const salvos = new Set([...util(inicial.contact ?? {}), ...util(inicial.fields ?? {})])
     return [...Object.keys(detectado.contato), ...Object.keys(detectado.campos)].filter(
       (chave) => !salvos.has(chave),
     ).length
     // Calculado do que foi DETECTADO contra o que estava SALVO, e não do estado
     // atual: depois do primeiro ajuste manual o número pararia de fazer sentido.
-  }, [detectado, inicial.contact, inicial.fields])
+  }, [detectado, inicial.contact, inicial.fields, payload])
 
   // Caminhos detectados no payload que a plataforma realmente enviou.
   const caminhos = useMemo(() => (payload ? listLeafPaths(payload) : []), [payload])

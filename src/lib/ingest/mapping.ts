@@ -231,7 +231,25 @@ export function applyMapping(payload: unknown, rawMapping: unknown): MappingResu
  */
 export const MAPEAMENTO_SUGERIDO: SourceMappingInput = {
   event_path: '$.event',
+  /*
+   * Os nomes de evento das plataformas reais, nas duas grafias que existem.
+   *
+   * A documentação da mais comum usa inglês com hífen — `new-user`,
+   * `payment-by-deposit` — enquanto o painel dela exibe "Novo Usuário" e
+   * "Qrcode Pago". Outras usam português com sublinhado. As duas famílias ficam
+   * aqui porque o mapeamento sugerido é o ponto de partida de QUALQUER
+   * plataforma, e adivinhar errado custa uma tela em branco.
+   *
+   * `payment-by-game` é PRÊMIO, não pagamento: a plataforma trata os dois como
+   * movimentação de dinheiro e distingue pela direção. Confundi-los faria quem
+   * ganhou receber "aposta confirmada".
+   */
   event_map: {
+    'new-user': 'user.created',
+    'qrcode-created': 'order.created',
+    'payment-by-deposit': 'order.paid',
+    'payment-by-game': 'ticket.awarded',
+
     novo_usuario: 'user.created',
     qrcode_criado: 'order.created',
     qrcode_pago: 'order.paid',

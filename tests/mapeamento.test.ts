@@ -41,14 +41,7 @@ const CANONICOS = new Set<string>(CANONICAL_EVENTS)
  * Copiados do componente de propósito: se alguém acrescentar um lá sem tradução
  * aqui, é este teste que avisa — e não a plataforma de quem conectou.
  */
-const EVENTOS_NO_ENDERECO = [
-  'novo_usuario',
-  'qrcode_criado',
-  'qrcode_pago',
-  'bilhete_premiado',
-  'saque_pendente',
-  'saque_finalizado',
-]
+const EVENTOS_NO_ENDERECO = ['new-user', 'qrcode-created', 'payment-by-deposit', 'payment-by-game']
 
 describe('§4.2 — o que a plataforma manda alimenta o que a mensagem escreve', () => {
   const oferecidos = new Set<string>(CAMPOS_CANONICOS.map((c) => c.chave))
