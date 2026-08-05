@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState } from 'react'
 import { useFormStatus } from 'react-dom'
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
 import { CANONICAL_EVENTS } from '@/db/schema/enums'
+import { detectarMapeamento } from '@/lib/ingest/detectar'
 import { CAMPOS_CANONICOS } from '@/lib/ingest/mapping'
 import { getByPath, listLeafPaths } from '@/lib/ingest/path'
 import { salvarMapeamentoAction, type PlataformaState } from '../actions'
@@ -28,6 +29,26 @@ function caminhoDe(spec: unknown): string {
   return ''
 }
 
+/**
+ * O que foi salvo vence; o palpite preenche o que ficou vazio.
+ *
+ * Nessa ordem porque a pessoa é a autoridade sobre o próprio mapeamento: um
+ * palpite que sobrescreve escolha manual desfaz trabalho e destrói a confiança
+ * na tela inteira.
+ */
+function comPalpites(
+  salvo: Record<string, unknown>,
+  palpites: Record<string, { caminho: string }>,
+): Record<string, string> {
+  const saida = Object.fromEntries(Object.entries(salvo).map(([k, v]) => [k, caminhoDe(v)]))
+
+  for (const [chave, palpite] of Object.entries(palpites)) {
+    if (!saida[chave]) saida[chave] = palpite.caminho
+  }
+
+  return saida
+}
+
 function Salvar() {
   const { pending } = useFormStatus()
   return (
@@ -49,16 +70,53 @@ export function CombinarCampos({
   const inicial = (mapping ?? {}) as Mapping
   const [state, formAction] = useActionState<PlataformaState, FormData>(salvarMapeamentoAction, {})
 
-  const [eventPath, setEventPath] = useState(inicial.event_path ?? '$.event')
-  const [eventMap, setEventMap] = useState<Record<string, string>>(inicial.event_map ?? {})
+  /*
+   * O QUE A TELA CONSEGUE ADIVINHAR, ELA JÁ VEM PREENCHIDO.
+   *
+   * Ela mostrava "10 campos detectados" no cabeçalho e, logo abaixo, dezoito
+   * seletores em "— não usar —" com "— não encontrado" embaixo de cada um.
+   * Detectar e não usar o que detectou é a pior combinação possível: parece que
+   * o sistema entendeu, e obriga a pessoa a refazer o trabalho à mão.
+   *
+   * O palpite NUNCA sobrescreve o que já foi salvo — ele preenche buraco. Quem
+   * ajustou um campo à mão e voltou à tela encontra o ajuste dele, não o
+   * chute do sistema.
+   */
+  const detectado = useMemo(() => detectarMapeamento(payload), [payload])
+
+  const [eventPath, setEventPath] = useState(
+    inicial.event_path ?? detectado.eventPath ?? '$.event',
+  )
+
+  const [eventMap, setEventMap] = useState<Record<string, string>>(() => {
+    const salvo = inicial.event_map ?? {}
+    const nome = payload ? String(getByPath(payload, inicial.event_path ?? detectado.eventPath ?? '$.event') ?? '') : ''
+
+    // O evento que acabou de chegar entra traduzido, quando dá para reconhecê-lo.
+    return nome && !(nome in salvo) && detectado.eventoCanonico
+      ? { ...salvo, [nome]: detectado.eventoCanonico }
+      : salvo
+  })
+
   const [contato, setContato] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      Object.entries(inicial.contact ?? {}).map(([k, v]) => [k, caminhoDe(v)]),
-    ),
+    comPalpites(inicial.contact ?? {}, detectado.contato),
   )
   const [campos, setCampos] = useState<Record<string, string>>(() =>
-    Object.fromEntries(Object.entries(inicial.fields ?? {}).map(([k, v]) => [k, caminhoDe(v)])),
+    comPalpites(inicial.fields ?? {}, detectado.campos),
   )
+
+  /** Quantos campos a tela preencheu sozinha, para poder dizer isso em voz alta. */
+  const quantosPalpites = useMemo(() => {
+    const salvos = new Set([
+      ...Object.keys(inicial.contact ?? {}),
+      ...Object.keys(inicial.fields ?? {}),
+    ])
+    return [...Object.keys(detectado.contato), ...Object.keys(detectado.campos)].filter(
+      (chave) => !salvos.has(chave),
+    ).length
+    // Calculado do que foi DETECTADO contra o que estava SALVO, e não do estado
+    // atual: depois do primeiro ajuste manual o número pararia de fazer sentido.
+  }, [detectado, inicial.contact, inicial.fields])
 
   // Caminhos detectados no payload que a plataforma realmente enviou.
   const caminhos = useMemo(() => (payload ? listLeafPaths(payload) : []), [payload])
@@ -157,6 +215,19 @@ export function CombinarCampos({
             escolhe qual alimenta o quê, sem digitar caminho à mão. Enquanto isso, dá para preencher
             manualmente.
           </p>
+        ) : quantosPalpites > 0 ? (
+          /*
+            Dizer que foi a tela quem preencheu, e quantos.
+
+            Campo que aparece preenchido sem explicação é campo que ninguém
+            confere — e um palpite errado passa direto para a produção. A frase
+            transforma "está pronto" em "está pronto, confira".
+          */
+          <p className="rounded-lg border border-ok/40 px-3 py-2 text-2xs text-ok">
+            {quantosPalpites} campo{quantosPalpites === 1 ? '' : 's'} preenchido
+            {quantosPalpites === 1 ? '' : 's'} a partir do último evento recebido. Confira o valor
+            de exemplo embaixo de cada um e ajuste o que não bater.
+          </p>
         ) : null}
 
         <form action={formAction} className="flex flex-col gap-5">
@@ -227,7 +298,12 @@ export function CombinarCampos({
                 size="sm"
                 className="self-start"
                 onClick={() =>
-                  setEventMap((m) => ({ ...m, [nomeDoEventoNoPayload]: 'order.created' }))
+                  setEventMap((m) => ({
+                    ...m,
+                    // O reconhecido, e não um chute fixo: `order.created` para um
+                    // evento de cadastro seria erro pré-selecionado.
+                    [nomeDoEventoNoPayload]: detectado.eventoCanonico ?? 'order.created',
+                  }))
                 }
               >
                 Adicionar “{nomeDoEventoNoPayload}”
