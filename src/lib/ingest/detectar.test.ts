@@ -134,6 +134,13 @@ describe('§4.1 — o nome do evento traduzido', () => {
     }
 
     expect(eventoCanonicoDe('qrcode-created')).toBe('order.created')
+
+    /*
+     * O nome do pagamento descreve o MEIO, não o desfecho — e é o evento que
+     * manda parar os lembretes de recuperação. Não reconhecê-lo deixa a pessoa
+     * recebendo "seu PIX ainda está aberto" depois de ter pagado.
+     */
+    expect(eventoCanonicoDe('payment-by-deposit')).toBe('order.paid')
     expect(eventoCanonicoDe('qrcode-paid')).toBe('order.paid')
     expect(eventoCanonicoDe('qrcode_pago')).toBe('order.paid')
     expect(eventoCanonicoDe('bilhete_premiado')).toBe('ticket.awarded')

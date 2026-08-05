@@ -313,6 +313,21 @@ const SINONIMOS: Record<CanonicalEvent, string[]> = {
     'paid',
     'aposta paga',
     'bet paid',
+    /*
+     * `payment-by-deposit` é como o Techloto chama o PIX que caiu — nem
+     * "pago", nem "qrcode": o nome descreve o MEIO, não o desfecho. É o evento
+     * mais importante da cadeia, porque é ele que manda parar os lembretes de
+     * recuperação. Não reconhecê-lo deixaria a pessoa recebendo "seu PIX ainda
+     * está aberto" depois de ter pagado.
+     */
+    'payment by deposit',
+    'payment by pix',
+    'deposit',
+    'deposito',
+    'pix recebido',
+    'payment received',
+    'pagamento recebido',
+    'pagamento confirmado',
   ],
   'order.expired': ['expirou', 'expired', 'qrcode expired', 'qrcode expirado', 'pix expirado'],
   'order.cancelled': [
