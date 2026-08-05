@@ -7,12 +7,12 @@ import { withTenant } from '@/db'
 import { buscarFluxo } from '@/db/queries/flows'
 import { seedFlows } from '@/db/seed-flows'
 import { semearRitmos } from '@/db/seed-org'
-import { flows, flowSteps } from '@/db/schema'
+import { flows, flowSteps, messages } from '@/db/schema'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { createLogger } from '@/lib/logger'
 import { montarChave, variaveisDaChave } from '@/lib/flows/cancel-key'
-import { lerAtraso } from '@/lib/flows/schedule'
+import { formatarHorario, lerAtraso, lerHorario } from '@/lib/flows/schedule'
 import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 
 /** Fluxos (§5). */
@@ -186,6 +186,10 @@ const passoSchema = z.object({
   stepId: z.uuid(),
   flowId: z.uuid(),
   atraso: z.string().trim().max(20),
+  /** Vazio = sem hora marcada; o passo sai no instante da cascata. */
+  hora: z.string().trim().max(5),
+  /** Ausente = não mexer na mensagem — o formulário sempre manda, mas a API é usada por gente. */
+  messageId: z.uuid().optional(),
 })
 
 export async function salvarPassoAction(
@@ -199,6 +203,8 @@ export async function salvarPassoAction(
     stepId: formData.get('stepId'),
     flowId: formData.get('flowId'),
     atraso: formData.get('atraso') ?? '0',
+    hora: formData.get('hora') ?? '',
+    ...(formData.get('messageId') ? { messageId: formData.get('messageId') } : {}),
   })
   if (!parsed.success) return { erro: 'Dados inválidos.' }
 
@@ -207,7 +213,12 @@ export async function salvarPassoAction(
     return { erro: 'Não entendi o tempo. Use algo como 5min, 2h ou 3 dias.' }
   }
 
-  await withTenant(tenantOf(user), async (tx) => {
+  const minutos = parsed.data.hora === '' ? null : lerHorario(parsed.data.hora)
+  if (parsed.data.hora !== '' && minutos === null) {
+    return { erro: 'Não entendi o horário. Use algo como 10:00 ou 18:30.' }
+  }
+
+  const problema = await withTenant(tenantOf(user), async (tx) => {
     // O `where` passa pelo fluxo para o RLS valer: `flow_steps` não tem org_id.
     const [fluxo] = await tx
       .select({ id: flows.id })
@@ -215,13 +226,41 @@ export async function salvarPassoAction(
       .where(and(eq(flows.id, parsed.data.flowId), eq(flows.orgId, user.orgId)))
       .limit(1)
 
-    if (!fluxo) return
+    if (!fluxo) return null
+
+    /*
+     * A mensagem tem de ser DESTA organização.
+     *
+     * O id vem de um `<select>`, e um `<select>` é uma sugestão: qualquer um
+     * consegue mandar outro valor. `flow_steps.message_id` é uma FK sem
+     * `org_id` junto, então o banco aceitaria alegremente um passo apontando
+     * para a mensagem de outra banca — e o RLS não pegaria, porque a escrita é
+     * em `flow_steps`, cuja política olha o FLUXO, não a mensagem.
+     */
+    if (parsed.data.messageId) {
+      const [mensagem] = await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(and(eq(messages.id, parsed.data.messageId), eq(messages.orgId, user.orgId)))
+        .limit(1)
+
+      if (!mensagem) return 'Essa mensagem não existe aqui.'
+    }
 
     await tx
       .update(flowSteps)
-      .set({ delaySeconds: segundos, updatedAt: new Date() })
+      .set({
+        delaySeconds: segundos,
+        sendAtLocal: minutos === null ? null : formatarHorario(minutos),
+        ...(parsed.data.messageId ? { messageId: parsed.data.messageId } : {}),
+        updatedAt: new Date(),
+      })
       .where(and(eq(flowSteps.id, parsed.data.stepId), eq(flowSteps.flowId, fluxo.id)))
+
+    return null
   })
+
+  if (problema) return { erro: problema }
 
   revalidatePath(`/fluxos/${parsed.data.flowId}`)
   return { ok: true }

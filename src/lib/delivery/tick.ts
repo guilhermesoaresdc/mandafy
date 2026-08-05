@@ -356,23 +356,43 @@ export async function tickDeEnvio(
  * Existe separado porque `processarEnvio` abre o próprio contexto de tenant, e
  * quem chama o tick não tem sessão nenhuma.
  */
-export async function contarPendentes(): Promise<{ vencidos: number; futuros: number }> {
+export async function contarPendentes(): Promise<{
+  vencidos: number
+  futuros: number
+  /**
+   * Há quantos segundos a mensagem vencida mais antiga está esperando.
+   *
+   * É a única medida honesta de "as mensagens saem na hora". "Último batimento
+   * há 3 min" diz que ALGUÉM chamou; não diz se o intervalo entre chamadas
+   * cabe numa cadência de recuperação. Este número diz — e é justamente o que
+   * um agendador de duas em duas horas faz crescer sem que nada mais mude de
+   * aparência na tela.
+   */
+  esperaMaxSegundos: number
+}> {
   let vencidos = 0
   let futuros = 0
+  let esperaMaxSegundos = 0
 
   await paraCadaOrg(async (tx) => {
-    const [linha] = await tx.execute<{ vencidos: number; futuros: number }>(sql`
+    const [linha] = await tx.execute<{ vencidos: number; futuros: number; espera: number }>(sql`
       SELECT
         count(*) FILTER (WHERE scheduled_for IS NULL OR scheduled_for <= now())::int AS vencidos,
-        count(*) FILTER (WHERE scheduled_for > now())::int AS futuros
+        count(*) FILTER (WHERE scheduled_for > now())::int AS futuros,
+        coalesce(
+          extract(epoch FROM now() - min(scheduled_for))
+            FILTER (WHERE scheduled_for IS NOT NULL AND scheduled_for <= now()),
+          0
+        )::int AS espera
       FROM notifications
       WHERE status IN ('queued', 'scheduled')
     `)
 
     vencidos += linha?.vencidos ?? 0
     futuros += linha?.futuros ?? 0
+    esperaMaxSegundos = Math.max(esperaMaxSegundos, linha?.espera ?? 0)
     return 0
   })
 
-  return { vencidos, futuros }
+  return { vencidos, futuros, esperaMaxSegundos }
 }

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { chavesIguais, montarChave, normalizarChave, variaveisDaChave } from './cancel-key'
 import { atende, descrever } from './conditions'
-import { formatarOffset, lerAtraso, planejarCascata } from './schedule'
+import {
+  formatarHorario,
+  formatarOffset,
+  lerAtraso,
+  lerHorario,
+  noHorarioLocal,
+  planejarCascata,
+} from './schedule'
 
 describe('chave de cancelamento (§5.1)', () => {
   it('resolve o modelo com os dados do evento', () => {
@@ -237,5 +244,152 @@ describe('rótulos de atraso', () => {
   it('recusa o que não sabe ler', () => {
     expect(lerAtraso('depois')).toBeNull()
     expect(lerAtraso('5 luas')).toBeNull()
+  })
+})
+
+/**
+ * A hora marcada de um passo (§5.1, §7.4).
+ *
+ * O QUE ESTE BLOCO IMPEDE
+ *
+ * "+2 dias" cai exatamente na hora em que o gatilho chegou: quem cria conta às
+ * 3h da manhã recebe a reativação às 3h da manhã. A hora marcada conserta isso,
+ * e traz junto dois modos de falha que só aparecem em produção, dias depois:
+ *
+ *   sair para TRÁS      o passo 2 chegaria antes do passo 1, e o cliente lê o
+ *                       "obrigado" antes da confirmação
+ *   errar por uma hora   somar -3h na mão acerta metade do ano e erra a outra
+ *                       metade, sem nada acusando
+ *
+ * Por isso o cálculo passa pelo `Intl` e por isso o teste mede em horário de
+ * Brasília, e não em UTC.
+ */
+describe('§5.1 — a hora marcada do passo', () => {
+  const SP = 'America/Sao_Paulo'
+
+  /** Que horas são em São Paulo, para as asserções lerem como a tela lê. */
+  const emSP = (d: Date) =>
+    new Intl.DateTimeFormat('pt-BR', {
+      timeZone: SP,
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(d)
+
+  it('lê as formas que alguém digita', () => {
+    expect(lerHorario('10:00')).toBe(600)
+    expect(lerHorario('10h')).toBe(600)
+    expect(lerHorario('9:5')).toBe(545)
+    expect(lerHorario('00:00')).toBe(0)
+    expect(lerHorario('23:59')).toBe(1439)
+    expect(lerHorario(' 18:30 ')).toBe(1110)
+  })
+
+  it('recusa o que não é hora, em vez de chutar', () => {
+    // Chutar aqui agenda o envio para uma hora que ninguém pediu.
+    expect(lerHorario('24:00')).toBeNull()
+    expect(lerHorario('10:60')).toBeNull()
+    expect(lerHorario('amanhã')).toBeNull()
+    expect(lerHorario('')).toBeNull()
+    expect(lerHorario('1000')).toBeNull()
+  })
+
+  it('grava sempre no mesmo formato', () => {
+    expect(formatarHorario(600)).toBe('10:00')
+    expect(formatarHorario(545)).toBe('09:05')
+    expect(formatarHorario(0)).toBe('00:00')
+  })
+
+  it('empurra para a frente, no mesmo dia', () => {
+    // 12:00 UTC = 09:00 em São Paulo. Pedindo 10:00, falta uma hora.
+    const quando = noHorarioLocal(new Date('2026-07-30T12:00:00Z'), 600, SP)
+    expect(emSP(quando)).toBe('30/07, 10:00')
+  })
+
+  it('quando a hora já passou, vai para o dia seguinte — nunca para trás', () => {
+    /*
+     * O caso que quebraria a cascata. Às 09:00 pedindo 08:00, puxar para trás
+     * daria 08:00 do MESMO dia: antes do instante que a cascata calculou, e
+     * possivelmente antes do passo anterior.
+     */
+    const gatilho = new Date('2026-07-30T12:00:00Z')
+    const quando = noHorarioLocal(gatilho, 480, SP)
+
+    expect(emSP(quando)).toBe('31/07, 08:00')
+    expect(quando.getTime()).toBeGreaterThan(gatilho.getTime())
+  })
+
+  it('em cima da hora, fica onde está', () => {
+    // Adiar 24 horas por causa de um arredondamento seria pior que a imprecisão.
+    const quando = noHorarioLocal(new Date('2026-07-30T12:00:00Z'), 540, SP)
+    expect(emSP(quando)).toBe('30/07, 09:00')
+  })
+
+  it('zera os segundos: quem pediu 10:00 não pediu 10:00:37', () => {
+    const quando = noHorarioLocal(new Date('2026-07-30T12:00:37.500Z'), 600, SP)
+    expect(quando.getSeconds()).toBe(0)
+    expect(quando.getMilliseconds()).toBe(0)
+  })
+
+  it('a mesma hora dá o mesmo relógio no verão e no inverno', () => {
+    /*
+     * O motivo de o cálculo passar pelo `Intl` em vez de somar -3h. O Brasil já
+     * teve horário de verão e pode voltar a ter; com aritmética fixa, metade do
+     * ano sairia uma hora fora e nada apontaria para cá.
+     */
+    const inverno = noHorarioLocal(new Date('2026-07-30T12:00:00Z'), 600, SP)
+    const verao = noHorarioLocal(new Date('2026-01-30T12:00:00Z'), 600, SP)
+
+    expect(emSP(inverno)).toBe('30/07, 10:00')
+    expect(emSP(verao)).toBe('30/01, 10:00')
+  })
+
+  it('na cascata, o horário vale para o passo e o acumulado segue o atraso', () => {
+    /*
+     * A decisão de projeto que este caso prende: o passo 3 conta do ATRASO do
+     * passo 2, não do horário para o qual ele foi empurrado. Encadear a partir
+     * do horário faria mexer numa hora arrastar toda a cadência abaixo dela —
+     * e "+2 dias" deixaria de querer dizer dois dias.
+     */
+    const agenda = planejarCascata(
+      [
+        { id: 'p1', position: 1, delaySeconds: 0 },
+        { id: 'p2', position: 2, delaySeconds: 2 * 86400, sendAtLocal: '10:00' },
+        { id: 'p3', position: 3, delaySeconds: 86400 },
+      ],
+      new Date('2026-07-30T06:00:00Z'), // 03:00 em São Paulo
+      SP,
+    )
+
+    // O acumulado ignora o horário: 0, 2 dias, 3 dias.
+    expect(agenda.map((a) => a.offsetSeconds)).toEqual([0, 172_800, 259_200])
+
+    expect(emSP(agenda[0]!.quando)).toBe('30/07, 03:00')
+    // Sem a hora marcada, este cairia às 03:00 de 01/08 — a madrugada de quem
+    // se cadastrou de madrugada.
+    expect(emSP(agenda[1]!.quando)).toBe('01/08, 10:00')
+    expect(emSP(agenda[2]!.quando)).toBe('02/08, 03:00')
+  })
+
+  it('horário ilegível é ignorado, e o passo sai na hora da cascata', () => {
+    // Vem de uma coluna do banco. Derrubar o fluxo inteiro por causa dela seria
+    // trocar "sai na hora errada" por "não sai".
+    const agenda = planejarCascata(
+      [{ id: 'p1', position: 1, delaySeconds: 3600, sendAtLocal: 'meio-dia' }],
+      new Date('2026-07-30T12:00:00Z'),
+      SP,
+    )
+    expect(emSP(agenda[0]!.quando)).toBe('30/07, 10:00')
+  })
+
+  it('sem horário, nada muda — é o padrão de todo passo de recuperação', () => {
+    const agenda = planejarCascata(
+      [{ id: 'p1', position: 1, delaySeconds: 300 }],
+      new Date('2026-07-30T12:00:00Z'),
+      SP,
+    )
+    expect(agenda[0]!.quando.toISOString()).toBe('2026-07-30T12:05:00.000Z')
   })
 })

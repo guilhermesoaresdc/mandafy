@@ -29,6 +29,16 @@ export const dynamic = 'force-dynamic'
  * mensagens estão saindo?" antes de "o cron está configurado?".
  */
 
+/** "40 s", "12 min", "2h10". Sem arredondar para cima: o atraso é a notícia. */
+function esperaEmPalavras(segundos: number): string {
+  if (segundos < 60) return `${segundos} s`
+
+  const minutos = Math.floor(segundos / 60)
+  if (minutos < 60) return `${minutos} min`
+
+  return `${Math.floor(minutos / 60)}h${String(minutos % 60).padStart(2, '0')}`
+}
+
 function quandoFoi(data: Date | null): string {
   if (!data) return 'nunca'
 
@@ -148,6 +158,41 @@ export default async function SistemaPage() {
                 {quandoFoi(estado.batimento.ultimaZeragem)}
               </span>
             </div>
+
+            {/*
+              O NÚMERO QUE DIZ SE SAI NA HORA.
+              "Último batimento há 3 min" só conta que alguém chamou. Um
+              agendador de duas em duas horas mantém esse selo verde e entrega
+              um lembrete de PIX de 5 minutos duas horas depois — a espera
+              abaixo é o único lugar onde isso aparece.
+            */}
+            {estado.fila.vencidos > 0 ? (
+              <div
+                className={`rounded-lg border px-3 py-2 text-2xs ${
+                  estado.fila.esperaMaxSegundos > 300
+                    ? 'border-warn/40 text-ink-2'
+                    : 'border-line text-ink-2'
+                }`}
+              >
+                <p>
+                  A mensagem vencida mais antiga espera há{' '}
+                  <span className={estado.fila.esperaMaxSegundos > 300 ? 'text-warn' : 'text-ok'}>
+                    {esperaEmPalavras(estado.fila.esperaMaxSegundos)}
+                  </span>
+                  .
+                </p>
+                {estado.fila.esperaMaxSegundos > 300 ? (
+                  <p className="mt-1">
+                    Um lembrete marcado para 5 minutos depois do PIX está saindo com esse atraso. É
+                    o agendador chamando de longe em longe — o Vercel Cron do plano gratuito roda{' '}
+                    <strong>uma vez por dia</strong> e o GitHub Actions, na prática, a cada 2 ou 3
+                    horas. Para cadência de verdade, aponte um serviço de 1 minuto para{' '}
+                    <code className="font-mono">/api/cron</code>; o cron-job.org é gratuito e se
+                    configura pelo navegador.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <BotaoDeSistema
               acao={baterAgoraAction}
