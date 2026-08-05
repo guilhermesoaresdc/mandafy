@@ -33,6 +33,84 @@ export const LIMITE_UCS2_MULTIPLO = 67
 /** Preço por segmento, em centavos. Ajustável quando houver contrato fechado. */
 export const PRECO_SEGMENTO_CENTAVOS = 6
 
+/**
+ * Quantos segmentos um SMS pode custar (§6.4, §8.4).
+ *
+ * UM. E o número não é uma preferência de estilo: o SMS é o único canal deste
+ * sistema que se cobra por pedaço, e o 161º caractere DOBRA a conta de uma
+ * mensagem que vai para a base inteira. Um acento fora do GSM-7 é pior ainda —
+ * derruba o limite de 160 para 70 e triplica.
+ *
+ * O catálogo já era medido por teste, mas teste não alcança quem escreve texto
+ * novo na tela. Entre o editor e a fatura do provedor não havia nada: `tsc`,
+ * `eslint` e `next build` passam com um SMS de três segmentos, e o custo só
+ * aparece na fatura do mês seguinte, sem nada ligando uma coisa à outra.
+ */
+export const SEGMENTOS_MAX = 1
+
+/** Quantas unidades cabem em `n` segmentos, na codificação do texto. */
+export function orcamentoDeUnidades(codificacao: Codificacao, segmentos = SEGMENTOS_MAX): number {
+  if (segmentos <= 1) {
+    return codificacao === 'GSM-7' ? LIMITE_GSM7_UNICO : LIMITE_UCS2_UNICO
+  }
+  return (codificacao === 'GSM-7' ? LIMITE_GSM7_MULTIPLO : LIMITE_UCS2_MULTIPLO) * segmentos
+}
+
+/**
+ * Corta o texto para caber no orçamento de segmentos.
+ *
+ * A ÚLTIMA LINHA DE DEFESA, e não a primeira. O editor impede que alguém
+ * escreva um SMS longo demais; isto existe porque a variável só ganha valor no
+ * ENVIO. Um corpo de 140 caracteres com `{{nome}}` e `{{sorteio}}` cabe folgado
+ * na tela e estoura quando "WELLINGTON APARECIDO GONÇALVES" e "Federal —
+ * Extração Especial de Natal" entram no lugar. Nada na tela preveria isso, e a
+ * fatura chegaria com o triplo.
+ *
+ * CORTA, e não recusa. Já pensei em derrubar a notificação como §6.3 faz com
+ * variável ausente, e é a decisão errada aqui: variável ausente produz uma
+ * frase quebrada que não pode chegar ao cliente, enquanto um SMS cortado
+ * continua sendo uma mensagem legível. Trocar "custou o dobro" por "o cliente
+ * não recebeu nada" não é economia.
+ *
+ * O corte é na PALAVRA, nunca no meio dela, e leva reticências para que quem
+ * recebe entenda que faltou pedaço em vez de achar que o sistema é desleixado.
+ */
+export function cortarParaSegmentos(
+  texto: string,
+  segmentos = SEGMENTOS_MAX,
+): { texto: string; cortado: boolean } {
+  const contagem = contarSms(texto)
+  if (contagem.segmentos <= segmentos) return { texto, cortado: false }
+
+  // As reticências entram no orçamento: elas também se pagam por septeto, e
+  // reservá-las depois do corte devolveria o texto ao segmento seguinte.
+  const RETICENCIAS = '...'
+  const orcamento = orcamentoDeUnidades(contagem.codificacao, segmentos) - RETICENCIAS.length
+
+  /*
+   * Caractere a caractere, e não `slice`: no GSM-7 um `{` custa DOIS septetos,
+   * e no UCS-2 um emoji fora do BMP custa duas unidades UTF-16. Cortar por
+   * índice de string erraria a conta justamente nos casos que estouram.
+   */
+  let usado = 0
+  let corte = 0
+  for (const c of texto) {
+    const custo =
+      contagem.codificacao === 'GSM-7' ? (EXTENDIDO.has(c) ? 2 : 1) : [...c].length > 0 ? c.length : 1
+    if (usado + custo > orcamento) break
+    usado += custo
+    corte += c.length
+  }
+
+  const pedaco = texto.slice(0, corte)
+  // Volta até o último espaço para não terminar no meio de uma palavra. Se não
+  // houver espaço nenhum (uma URL comprida, por exemplo), o corte seco vale.
+  const espaco = pedaco.lastIndexOf(' ')
+  const limpo = (espaco > orcamento * 0.6 ? pedaco.slice(0, espaco) : pedaco).trimEnd()
+
+  return { texto: `${limpo}${RETICENCIAS}`, cortado: true }
+}
+
 export type Codificacao = 'GSM-7' | 'UCS-2'
 
 export type ContagemSms = {
