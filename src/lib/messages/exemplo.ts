@@ -18,8 +18,20 @@ import type { DadosVariaveis } from './variables'
  */
 
 export const CONTATO_EXEMPLO: DadosVariaveis = {
+  /*
+   * `primeiro_nome` NÃO entra aqui, e a ausência é o ponto.
+   *
+   * Ele é um FILTRO — `{{nome|primeiro_nome}}` —, não um campo. Enquanto
+   * existia como chave deste objeto, a prévia resolvia `{{primeiro_nome}}` para
+   * "Maria" e quatro variantes de SMS foram escritas assim. Em produção nada
+   * grava esse campo: o que chega é `nome`, e as quatro caíam no padrão. O
+   * cliente lia "Oi tudo bem!" com o nome dele salvo na base ao lado.
+   *
+   * O exemplo é a única coisa que quem escreve mensagem enxerga antes de
+   * enviar. Um campo a mais aqui é uma variável que a prévia preenche e a
+   * realidade não.
+   */
   nome: 'MARIA APARECIDA DA SILVA',
-  primeiro_nome: 'Maria',
   telefone: '+5511988887777',
   email: 'maria@exemplo.com.br',
 

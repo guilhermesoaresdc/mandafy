@@ -56,18 +56,18 @@ import { MENSAGENS, type ModeloMensagem } from '@/lib/messages/modelos'
  */
 const HISTORICOS: Record<string, readonly string[]> = {
   bicho_resultado_premiado: ['40a911ccb612190a', '98715a9a96ed9d7d', 'd078e2b76d683a53', 'eba91325b37a2da4'],
-  bilhete_premiado: ['0a7fd9ee5c658c3e'],
+  bilhete_premiado: ['0a7fd9ee5c658c3e', 'c87ece3065e00e17'],
   boas_vindas: ['b6c9f10da9075829'],
-  campanha_encerrando: ['44527ea9cd40f8a2'],
-  pagamento_confirmado: ['cc735778797ecc5f'],
-  pix_expirou_oferta: ['361b20607084040f'],
-  pix_lembrete_1: ['70cb71abad3e697c'],
-  pix_lembrete_2: ['b38481511166aff8'],
-  pix_ultima_chance: ['c276c65b83d6e05d'],
+  campanha_encerrando: ['44527ea9cd40f8a2', 'cf7ce56cb248732f'],
+  pagamento_confirmado: ['cc735778797ecc5f', '237eeee4fe7d5b4a'],
+  pix_expirou_oferta: ['361b20607084040f', 'ca4b8b9152aace41'],
+  pix_lembrete_1: ['70cb71abad3e697c', '274d1859c8be8b28'],
+  pix_lembrete_2: ['b38481511166aff8', 'afbafa92b66a309b'],
+  pix_ultima_chance: ['c276c65b83d6e05d', '5d123ae0a2b42703'],
   pos_compra_upsell: ['a6d8782b4029fc68'],
-  reativacao_7d: ['e4244c60ba3bd080'],
-  saque_concluido: ['fa1dbe34990798de'],
-  saque_processando: ['e5d143e3567caaf1'],
+  reativacao_7d: ['e4244c60ba3bd080', '29d0be304cd08a49'],
+  saque_concluido: ['fa1dbe34990798de', 'a0700d2428d0ec88'],
+  saque_processando: ['e5d143e3567caaf1', '815e4cfa68489e91'],
 }
 
 function digital(texto: string): string {

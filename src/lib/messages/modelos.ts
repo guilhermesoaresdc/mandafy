@@ -17,6 +17,28 @@
  *
  * Todo texto é editável depois de criado. O que NÃO é palpite é a estrutura:
  * os canais ligados, as chaves e a categoria vêm da spec.
+ *
+ * NENHUMA VARIÁVEL DO CATÁLOGO É OBRIGATÓRIA
+ *
+ * Essa é a regra que governa cada texto abaixo, e ela não é estilo: §6.3 manda
+ * a notificação inteira falhar com `variavel_ausente` quando uma variável vem
+ * vazia — nunca mandar `Oi {{nome}}!` literal para o cliente. Está certo, e faz
+ * de cada `{{…}}` sem padrão um ponto único de falha silenciosa: a mensagem não
+ * sai, o cliente não recebe, e nada na tela explica por quê.
+ *
+ * O catálogo é o PONTO DE PARTIDA de quem acabou de conectar a plataforma, e
+ * plataforma nenhuma manda todos os campos que uma banca conhece. A que
+ * originou este projeto manda nome, telefone, e-mail, valor e o identificador
+ * da transação; sorteio, palpite, modalidade, horário de fechamento e link de
+ * pagamento não existem no webhook dela. Um catálogo escrito para o payload
+ * ideal é um catálogo que não envia.
+ *
+ * Então todo `{{…}}` daqui carrega um padrão — `{{valor_cents|moeda|"sua
+ * aposta"}}` — e cada frase foi escrita para ler bem NAS DUAS pontas: com o
+ * dado, e sem ele. Texto rico para quem manda dado rico; texto que sai para
+ * todo mundo. `tests/modelos.test.ts` compila os doze modelos, os assuntos e
+ * todas as variantes contra dados VAZIOS e exige `ok: true` — é lá que a regra
+ * deixa de depender de quem escreve o próximo modelo.
  */
 
 import type { Channel, MessageCategory } from '@/db/schema/enums'
@@ -103,9 +125,9 @@ Boa sorte! 🍀`,
      * ramos de tamanhos diferentes fazem a contagem do editor deixar de valer
      * para o envio.
      *
-     * Medido com dados ruins de propósito (nome de 30 letras, R$ 9.876,54,
-     * nome de sorteio comprido e link de pagamento com uuid): todos continuam
-     * em um segmento. `tests/modelos.test.ts` prende isso.
+     * Medido com dados ruins de propósito (nome de 30 letras, R$ 98.765,43 e um
+     * nome de sorteio comprido com travessão): todos continuam em um segmento.
+     * `tests/modelos.test.ts` prende isso.
      */
     variantes: {
       sms: { body: `Ola {{nome|primeiro_nome|"tudo bem"}}! Sua conta esta pronta. Escolha o bicho, a modalidade e o valor. Boa sorte!`, stripAccents: true },
@@ -115,29 +137,38 @@ Boa sorte! 🍀`,
   /*
    * A CADÊNCIA DE RECUPERAÇÃO (§5.2).
    *
-   * Numa banca, o prazo não é invenção de copy: cada sorteio FECHA numa hora
-   * fixa, e depois dela a aposta não entra mais. É a urgência mais forte que
-   * esta operação tem, e é verdadeira — por isso `{{fecha_em|hora}}` aparece
-   * nos quatro lembretes, e não uma frase genérica de escassez.
+   * O tom aqui é o que muda em relação a uma rifa: ali o cliente perde uma
+   * campanha que dura semanas; aqui ele perde a extração das 18h e a próxima é
+   * logo mais. Insistir demais num único sorteio queima o relacionamento por um
+   * valor pequeno — por isso são quatro toques curtos, e o último já aponta
+   * para a extração seguinte em vez de repetir "corre".
    *
-   * Também é o que muda o tom em relação a uma rifa: ali o cliente perde uma
-   * campanha que dura semanas; aqui ele perde a extração das 18h e a próxima
-   * é logo mais. Insistir demais num único sorteio queima o relacionamento
-   * por um valor pequeno.
+   * OS QUATRO PEDEM SÓ NOME E VALOR, E ISSO NÃO É ECONOMIA DE COPY
+   *
+   * A versão anterior abria com o nome do sorteio, citava o palpite e fechava
+   * com a hora do fechamento e o link de pagamento. Texto melhor — e que não
+   * saía. A plataforma que originou este projeto manda, no webhook de PIX
+   * gerado, o nome, o telefone e o valor. Só. Sem `sorteio`, sem `fecha_em`,
+   * sem `link_pagamento`, e §6.3 é explícita: variável sem valor derruba a
+   * notificação inteira com `variavel_ausente`. A cadência mais importante do
+   * sistema estava escrita para um payload que ninguém manda.
+   *
+   * Quem TEM esses campos continua podendo usá-los: eles seguem oferecidos na
+   * tela de combinar campos e no editor. O que mudou é o ponto de partida, que
+   * agora funciona com o mínimo em vez de falhar em silêncio com ele.
    */
   {
     key: 'pix_lembrete_1',
     name: 'Lembrete de PIX — 5 minutos',
     category: 'recuperacao',
     subject: 'Sua aposta ainda não foi confirmada',
-    body: `{Oi|Olá|E aí} {{nome|primeiro_nome|"tudo bem"}}! {Vi que|Notei que|Percebi que} o PIX de **{{valor_cents|moeda}}** da sua aposta ainda não caiu.
+    body: `{Oi|Olá|E aí} {{nome|primeiro_nome|"tudo bem"}}! {Vi que|Notei que|Percebi que} o PIX de **{{valor_cents|moeda|"sua aposta"}}** ainda não caiu.
 
-{{modalidade|"Sua aposta"}} em **{{palpite}}** no **{{sorteio}}**.
-As apostas fecham às **{{fecha_em|hora}}**.
+Enquanto ele não é pago, sua aposta não entra no sorteio.
 
-Finaliza aqui: {{link_pagamento}}`,
+{Dá tempo de finalizar|Ainda dá tempo|É rapidinho}: é só concluir o pagamento.`,
     variantes: {
-      sms: { body: `Oi {{primeiro_nome|"tudo bem"}}! O PIX de {{valor_cents|moeda}} nao caiu. As apostas fecham as {{fecha_em|hora}}: {{link_pagamento}}`, stripAccents: true },
+      sms: { body: `Oi {{nome|primeiro_nome|"tudo bem"}}! O PIX de {{valor_cents|moeda|"sua aposta"}} nao caiu. Enquanto nao pagar, sua aposta nao entra no sorteio.`, stripAccents: true },
     },
   },
   {
@@ -145,13 +176,11 @@ Finaliza aqui: {{link_pagamento}}`,
     name: 'Lembrete de PIX — 25 minutos',
     category: 'recuperacao',
     subject: 'Sua aposta ainda está reservada',
-    body: `{Ei|Oi de novo|Passando aqui} {{nome|primeiro_nome|"tudo bem"}}, seu palpite em **{{palpite}}** {ainda está reservado|continua guardado|segue separado}.
+    body: `{Ei|Oi de novo|Passando aqui} {{nome|primeiro_nome|"tudo bem"}}, sua aposta de **{{valor_cents|moeda|"hoje"}}** {ainda está reservada|continua guardada|segue separada}.
 
-{Falta pouco|É rapidinho|Leva menos de um minuto}: {{valor_cents|moeda}} pelo PIX e a aposta entra no **{{sorteio}}**.
-
-{{link_pagamento}}`,
+{Falta pouco|É rapidinho|Leva menos de um minuto}: assim que o PIX cair, ela entra no sorteio.`,
     variantes: {
-      sms: { body: `{{primeiro_nome|"Tudo bem"}}, seu palpite segue reservado. Sao {{valor_cents|moeda}} pelo PIX: {{link_pagamento}}`, stripAccents: true },
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, sua aposta de {{valor_cents|moeda|"hoje"}} segue reservada. Assim que o PIX cair, ela entra.`, stripAccents: true },
     },
   },
   {
@@ -161,9 +190,7 @@ Finaliza aqui: {{link_pagamento}}`,
     subject: 'As apostas fecham em instantes',
     body: `{{nome|primeiro_nome|"Tudo bem"}}, {esta é a última chamada|essa é a reta final|é agora ou nunca}.
 
-O **{{sorteio}}** fecha às **{{fecha_em|hora}}** e seu palpite em **{{palpite}}** {ainda não entrou|fica de fora}.
-
-Garante aqui: {{link_pagamento}}`,
+O PIX de **{{valor_cents|moeda|"sua aposta"}}** {está prestes a expirar|vence em instantes} e a aposta {sai da reserva|fica de fora}.`,
 
     variantes: {
       /*
@@ -175,15 +202,13 @@ Garante aqui: {{link_pagamento}}`,
        * abandonou o PIX. Um acento basta para derrubar o limite de 160 para 70,
        * e o spintax pode escolher a alternativa mais longa sem avisar.
        *
-       * O NOME DO SORTEIO SAIU DAQUI, e não por economia de palavras: ele é
-       * texto livre digitado pela banca. Com "Federal — Extração Especial de
-       * Natal" e um link de pagamento com uuid, esta mensagem passava de 160 e
-       * voltava a custar dois segmentos. O que segura a urgência é a HORA do
-       * fechamento, que tem tamanho fixo; quem recebe já sabe em que sorteio
-       * apostou.
+       * Sobrou nome e valor, que é o que a plataforma manda e o que tem tamanho
+       * previsível. O nome do sorteio é texto livre digitado pela banca: com
+       * "Federal — Extração Especial de Natal" no meio, esta mensagem passava
+       * de 160 e voltava a custar dois segmentos mesmo quando o campo existia.
        */
       sms: {
-        body: `{{primeiro_nome|"Ola"}}, as apostas fecham as {{fecha_em|hora}} e a sua nao entrou. Garante agora: {{link_pagamento}}`,
+        body: `{{nome|primeiro_nome|"Ola"}}, o PIX de {{valor_cents|moeda|"sua aposta"}} esta prestes a expirar e sua aposta fica de fora.`,
         stripAccents: true,
       },
     },
@@ -198,13 +223,11 @@ Garante aqui: {{link_pagamento}}`,
      * cliente sabe a que horas a extração saiu.
      */
     subject: 'Esse sorteio fechou — o próximo já está aberto',
-    body: `{Oi|Olá} {{nome|primeiro_nome|"tudo bem"}}, o **{{sorteio}}** {fechou|já saiu} e sua aposta não chegou a entrar.
+    body: `{Oi|Olá} {{nome|primeiro_nome|"tudo bem"}}, o PIX de **{{valor_cents|moeda|"sua aposta"}}** {expirou|venceu} e a aposta não chegou a entrar.
 
-{Mas o próximo já está aberto|A próxima extração já aceita aposta}: mesmo palpite, mesmo valor, um toque.
-
-{{link_pagamento}}`,
+{Mas dá para refazer num toque|Gerar outro leva um minuto}: mesmo palpite, mesmo valor, e a próxima extração já aceita.`,
     variantes: {
-      sms: { body: `{{primeiro_nome|"Tudo bem"}}, o sorteio fechou e sua aposta nao entrou. A proxima ja aceita: {{link_pagamento}}`, stripAccents: true },
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, o PIX de {{valor_cents|moeda|"sua aposta"}} expirou e sua aposta nao entrou. Da para refazer num toque.`, stripAccents: true },
     },
   },
 
@@ -214,18 +237,25 @@ Garante aqui: {{link_pagamento}}`,
     category: 'transacional',
     ignoreQuietHours: true,
     subject: 'Aposta confirmada',
+    /*
+     * A confirmação trazia cinco campos numa tabelinha — modalidade, palpite,
+     * sorteio, valor e retorno. Bonito, e falhava: o webhook de pagamento manda
+     * o valor e o identificador da transação, não a ficha da aposta. Cinco
+     * variáveis obrigatórias numa mensagem TRANSACIONAL significa que a
+     * confirmação — a mensagem que a pessoa está esperando de olho no celular —
+     * era a mais fácil de derrubar do catálogo inteiro.
+     *
+     * Ficou o que chega sempre. Quem tem a ficha completa acrescenta as linhas
+     * no editor; as variáveis continuam todas disponíveis lá.
+     */
     body: `Aposta confirmada, {{nome|primeiro_nome|"tudo bem"}}! ✅
 
-**{{modalidade}}** em **{{palpite}}**
-Sorteio: **{{sorteio}}**
-Valor: {{valor_cents|moeda}}
-{Se der, você recebe|Pagando} **{{retorno_cents|moeda}}**
+Valor: **{{valor_cents|moeda|"confirmado"}}**
+Comprovante: {{external_id|"disponível na sua conta"}}
 
-Comprovante: {{external_id}}
-
-Boa sorte! 🍀`,
+{Agora é torcer|Boa sorte}! 🍀`,
     variantes: {
-      sms: { body: `Aposta confirmada, {{nome|primeiro_nome|"tudo bem"}}! {{valor_cents|moeda}} no {{sorteio}}, pagando {{retorno_cents|moeda}}. Comprovante {{external_id}}.`, stripAccents: true },
+      sms: { body: `Aposta confirmada, {{nome|primeiro_nome|"tudo bem"}}! Valor {{valor_cents|moeda|"confirmado"}}. Comprovante {{external_id|"na sua conta"}}.`, stripAccents: true },
     },
   },
 
@@ -236,16 +266,24 @@ Boa sorte! 🍀`,
    * canal, não só a formatação. Por isso as quatro variantes vêm escritas à
    * mão, e é o exemplo de referência de quando não sincronizar.
    *
-   * Duas decisões de conteúdo que valem para qualquer banca:
-   *
    * O resultado sai ANTES do valor, nos quatro. Quem recebe já sabe que
-   * apostou; o que ele quer saber é se deu. Abrir com saudação e deixar a
-   * milhar no terceiro parágrafo é escrever para si mesmo.
+   * apostou; o que ele quer saber é se deu. Abrir com saudação e deixar o
+   * resultado no terceiro parágrafo é escrever para si mesmo.
    *
-   * `{{milhar}}` nunca leva filtro. É texto justamente para preservar zero à
-   * esquerda — `0742` vira `742` no instante em que alguém o tratar como
-   * número, e resultado errado em mensagem de prêmio é o erro mais caro que
-   * esta caixa de texto permite cometer.
+   * O BLOCO DE RESULTADO SAIU DAQUI
+   *
+   * As quatro variantes traziam `1º prêmio {{milhar}} · grupo {{grupo}} ·
+   * {{bicho}}` e um link para o resultado completo. É o texto certo para quem
+   * tem esses campos — e não é o caso do webhook de bilhete premiado, que manda
+   * quem ganhou e quanto. Como toda variável sem valor derruba a notificação
+   * (§6.3), o efeito prático era o pior possível: a mensagem de PRÊMIO, a única
+   * do catálogo que o cliente conta para os outros, era a que mais falhava.
+   *
+   * Se a sua plataforma manda o resultado, `milhar`, `grupo`, `bicho` e
+   * `link_resultado` continuam disponíveis no editor — e `{{milhar}}` nunca
+   * leva filtro, porque é texto para preservar o zero à esquerda: `0742` vira
+   * `742` no instante em que alguém o tratar como número, e resultado errado em
+   * mensagem de prêmio é o erro mais caro que esta caixa de texto comete.
    */
   {
     key: 'bilhete_premiado',
@@ -259,71 +297,59 @@ Boa sorte! 🍀`,
 
     body: `🐘 **Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!**
 
-Sorteio **{{sorteio}}** · 1º prêmio: **{{milhar}}**
-Grupo {{grupo}} — {{bicho}}
+{{palpite|"Seu palpite"}} bateu no {{sorteio|"sorteio de hoje"}}.
 
-Seu palpite em {{palpite}} bateu. Prêmio: **{{retorno_cents|moeda}}** já creditado na sua conta.
-
-Conferir o resultado completo: {{link_resultado}}`,
+Prêmio: **{{retorno_cents|moeda|"conforme a tabela"}}** — já disponível na sua conta.`,
 
     variantes: {
       /*
        * SMS: um segmento GSM-7 são 160 caracteres, e cada segmento a mais é
        * outra cobrança em cima de uma mensagem que já vai para todo mundo que
        * ganhou. Sem spintax (o sorteio de variante pode estourar o limite sem
-       * avisar), sem emoji (força UCS-2 e derruba o limite para 70), sem
-       * acento — e o link encurtado pelo próprio sistema.
+       * avisar), sem emoji (força UCS-2 e derruba o limite para 70), sem acento.
        *
-       * O grupo e o bicho entram entre parênteses, e não em frase: com um nome
-       * de sorteio comprido esta mensagem passava de 160 e custava dois
-       * segmentos. O resultado continua completo — sorteio, milhar, grupo,
-       * bicho e valor —, que é o que quem ganhou quer conferir.
+       * O nome do sorteio fica de fora deste: ele é texto livre digitado pela
+       * banca, e "Federal — Extração Especial de Natal" sozinho já empurrava a
+       * mensagem para o segundo segmento. Quem ganhou confere o resultado no
+       * app; o que o SMS precisa dizer é que deu e quanto.
        */
       sms: {
-        body: `Deu no seu bicho! {{sorteio}}, 1o premio {{milhar}} ({{grupo}} {{bicho}}). Premio de {{retorno_cents|moeda}}: {{link_resultado}}`,
+        body: `Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}! {{palpite|"Seu palpite"}} bateu. Premio: {{retorno_cents|moeda|"confira na sua conta"}}.`,
         stripAccents: true,
       },
 
       /*
        * E-mail: assunto sem emoji e sem CAIXA ALTA — os dois são gatilho de
        * filtro de spam, e queimar reputação numa mensagem que a pessoa QUER
-       * receber é o pior lugar para fazê-lo. O preheader repete o resultado
-       * porque é a segunda linha visível na caixa de entrada, e é o que decide
-       * a abertura.
+       * receber é o pior lugar para fazê-lo. O preheader carrega o valor porque
+       * é a segunda linha visível na caixa de entrada, e é o que decide a
+       * abertura.
        */
       email: {
-        subject: 'Deu no seu bicho — {{sorteio}}, grupo {{grupo}}',
-        preheader: '1º prêmio {{milhar}} · {{bicho}} · {{retorno_cents|moeda}} creditados',
+        subject: 'Deu no seu bicho — {{sorteio|"confira o resultado"}}',
+        preheader: 'Seu palpite bateu — prêmio: {{retorno_cents|moeda|"confira na sua conta"}}',
         body: `Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!
 
-**Sorteio {{sorteio}}**
-1º prêmio: **{{milhar}}**
-Grupo {{grupo}} — {{bicho}}
+{{palpite|"Seu palpite"}} bateu no {{sorteio|"sorteio de hoje"}}.
 
-Seu palpite em {{palpite}} bateu. O prêmio de **{{retorno_cents|moeda}}** já está creditado na sua conta.
-
-[Conferir o resultado completo]({{link_resultado}})`,
+Prêmio: **{{retorno_cents|moeda|"conforme a tabela"}}** — já está na sua conta.`,
       },
 
       /*
-       * Telegram: o botão é o que este canal tem e os outros não. Ele substitui
-       * o link no corpo — deixar os dois faz a pessoa ler a mesma coisa duas
-       * vezes e reduz o clique em vez de aumentar.
+       * Telegram: escrito no MESMO Markdown reduzido dos outros, não em HTML
+       * cru. O renderizador é que produz as tags (§6.2), e um `<b>` digitado
+       * aqui chega ao cliente como `&lt;b&gt;` escapado, à vista.
        *
-       * Escrito no MESMO Markdown reduzido dos outros, não em HTML cru: o
-       * renderizador é que produz as tags (§6.2), e um `<b>` digitado aqui
-       * chega ao cliente como `&lt;b&gt;` escapado, à vista.
+       * Sem botão: o único link que caberia num é `{{link_resultado}}`, que
+       * este webhook não manda. Botão apontando para lugar nenhum é pior do que
+       * botão nenhum — quem mapeia esse campo acrescenta o botão no editor.
        */
       telegram: {
         body: `🐘 **Deu no seu bicho, {{nome|primeiro_nome|"parceiro"}}!**
 
-Sorteio **{{sorteio}}**
-1º prêmio: **{{milhar}}**
-Grupo {{grupo}} — {{bicho}}
+{{palpite|"Seu palpite"}} bateu no {{sorteio|"sorteio de hoje"}}.
 
-Seu palpite em {{palpite}} bateu.
-Prêmio: **{{retorno_cents|moeda}}**, já creditado.`,
-        buttons: [{ text: '🐘 Ver resultado completo', url: '{{link_resultado}}' }],
+Prêmio: **{{retorno_cents|moeda|"conforme a tabela"}}**, já creditado.`,
       },
     },
   },
@@ -334,11 +360,11 @@ Prêmio: **{{retorno_cents|moeda}}**, já creditado.`,
     category: 'transacional',
     ignoreQuietHours: true,
     subject: 'Saque em processamento',
-    body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de **{{valor_cents|moeda}}** está sendo processado.
+    body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de **{{valor_cents|moeda|"hoje"}}** está sendo processado.
 
 Assim que cair na conta a gente avisa.`,
     variantes: {
-      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de {{valor_cents|moeda}} esta em processamento. A gente avisa assim que cair na conta.`, stripAccents: true },
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, seu saque de {{valor_cents|moeda|"hoje"}} esta em processamento. A gente avisa assim que cair na conta.`, stripAccents: true },
     },
   },
   {
@@ -347,11 +373,11 @@ Assim que cair na conta a gente avisa.`,
     category: 'transacional',
     ignoreQuietHours: true,
     subject: 'Saque concluído',
-    body: `💸 Saque de **{{valor_cents|moeda}}** concluído, {{nome|primeiro_nome|"tudo bem"}}.
+    body: `💸 Saque de **{{valor_cents|moeda|"hoje"}}** concluído, {{nome|primeiro_nome|"tudo bem"}}.
 
 Já deve estar na sua conta.`,
     variantes: {
-      sms: { body: `Saque de {{valor_cents|moeda}} concluido, {{nome|primeiro_nome|"tudo bem"}}. Ja deve estar na sua conta.`, stripAccents: true },
+      sms: { body: `Saque de {{valor_cents|moeda|"hoje"}} concluido, {{nome|primeiro_nome|"tudo bem"}}. Ja deve estar na sua conta.`, stripAccents: true },
     },
   },
 
@@ -367,23 +393,37 @@ Já deve estar na sua conta.`,
      */
     body: `{Oi|Olá|E aí} {{nome|primeiro_nome|"tudo bem"}}! {Faz uns dias que|Já faz um tempo que} você não aparece.
 
-As extrações seguem saindo todo dia, e {seu saldo está aqui|sua conta continua ativa}: **{{saldo_cents|moeda}}**.
+As extrações seguem saindo todo dia, e {sua conta continua ativa|sua conta está te esperando}.
+Saldo: **{{saldo_cents|moeda|"confira ao entrar"}}**
 
 Dá uma olhada nos resultados de hoje. 👀`,
     variantes: {
-      sms: { body: `Oi {{nome|primeiro_nome|"tudo bem"}}! As extracoes seguem saindo todo dia, e seu saldo esta aqui: {{saldo_cents|moeda}}.`, stripAccents: true },
+      sms: { body: `Oi {{nome|primeiro_nome|"tudo bem"}}! As extracoes seguem saindo todo dia. Saldo na sua conta: {{saldo_cents|moeda|"confira ao entrar"}}.`, stripAccents: true },
     },
   },
   {
     key: 'campanha_encerrando',
     name: 'Sorteio fechando',
     category: 'relacionamento',
-    subject: 'As apostas fecham hoje às {{fecha_em|hora}}',
-    body: `⏰ {{nome|primeiro_nome|"Tudo bem"}}, o **{{sorteio}}** fecha às **{{fecha_em|hora}}**.
+    /*
+     * O assunto perdeu a hora, e o corpo também.
+     *
+     * "As apostas fecham hoje às {{fecha_em|hora}}" é a linha de assunto mais
+     * forte do catálogo — e uma variável no ASSUNTO é a pior de todas: se ela
+     * vier vazia, não é uma frase que sai errada, é o e-mail inteiro que não
+     * sai. `fecha_em` não vem de webhook nenhum: é um horário da grade da
+     * banca, que ninguém manda por evento.
+     *
+     * Quem tem o horário — porque dispara este fluxo pela API pública, onde dá
+     * para mandar o que quiser — põe `{{fecha_em|hora}}` de volta no editor,
+     * onde a prévia mostra o resultado antes de a mensagem existir.
+     */
+    subject: 'O sorteio de hoje está fechando',
+    body: `⏰ {{nome|primeiro_nome|"Tudo bem"}}, o **{{sorteio|"sorteio de hoje"}}** está fechando.
 
 {Ainda dá tempo|Corre que dá tempo|Última chance} de colocar seu palpite.`,
     variantes: {
-      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, o {{sorteio}} fecha as {{fecha_em|hora}}. Ainda da tempo de colocar seu palpite.`, stripAccents: true },
+      sms: { body: `{{nome|primeiro_nome|"Tudo bem"}}, o {{sorteio|"sorteio de hoje"}} esta fechando. Ainda da tempo de colocar seu palpite.`, stripAccents: true },
     },
   },
   {

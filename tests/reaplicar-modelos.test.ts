@@ -209,6 +209,45 @@ describe.skipIf(!habilitado)('§5.2 — reaplicar o catálogo', () => {
     expect(depois?.updatedAt.getTime()).toBe(antes?.updatedAt.getTime())
   })
 
+  /*
+   * O texto que está gravado AGORA, na instalação em produção, e que precisa
+   * ser reconhecido como escrito pelo sistema.
+   *
+   * Esta é a metade do arquivo que o comentário de `HISTORICOS` pede e que
+   * ninguém lembra de fazer: ao reescrever um modelo, a digital da versão que
+   * SAI tem de entrar na lista. Sem ela o comando classifica o texto antigo
+   * como "editado à mão", não toca em nada e reporta sucesso — e a atualização
+   * nunca chega a quem mais precisa dela.
+   *
+   * Este corpo é o da cadência de PIX escrita para um payload que a plataforma
+   * não manda: quatro variáveis obrigatórias — `palpite`, `sorteio`,
+   * `fecha_em`, `link_pagamento` — que faziam todo lembrete falhar com
+   * `variavel_ausente`. É exatamente a instalação que a atualização conserta.
+   */
+  it('reconhece o texto da versão anterior, e não o trata como edição à mão', async () => {
+    const ANTERIOR = `{Oi|Olá|E aí} {{nome|primeiro_nome|"tudo bem"}}! {Vi que|Notei que|Percebi que} o PIX de **{{valor_cents|moeda}}** da sua aposta ainda não caiu.
+
+{{modalidade|"Sua aposta"}} em **{{palpite}}** no **{{sorteio}}**.
+As apostas fecham às **{{fecha_em|hora}}**.
+
+Finaliza aqui: {{link_pagamento}}`
+
+    const [linha] = await db
+      .insert(schema.messages)
+      .values({ orgId: ORG, key: 'pix_lembrete_1', name: 'Lembrete de PIX', body: ANTERIOR })
+      .returning({ id: schema.messages.id })
+
+    const r = await reaplicarModelos(true, ADMIN_URL!)
+    expect(r.some((x) => x.key === 'pix_lembrete_1' && x.desfecho === 'reaplicado')).toBe(true)
+
+    const novo = await corpoDe(linha!.id)
+    expect(novo).toBe(linhasDoModelo(acharModelo(MENSAGENS, 'pix_lembrete_1')!).mensagem.body)
+
+    // E o texto que chegou não depende de campo nenhum além do que o webhook
+    // manda — é o motivo da troca, não um efeito colateral dela.
+    expect(novo).not.toContain('{{link_pagamento}}')
+  })
+
   it('reconhece modelo aposentado que ficou no banco', async () => {
     await db.insert(schema.messages).values({
       orgId: ORG,
