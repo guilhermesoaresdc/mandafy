@@ -8,6 +8,13 @@ import { PainelImportacao } from './painel-importacao'
 export const metadata: Metadata = { title: 'Importar leads · Mandafy' }
 export const dynamic = 'force-dynamic'
 
+/*
+ * A gravação é uma Server Action desta rota, e é a única do sistema que trabalha
+ * proporcionalmente ao que o usuário enviou. Os 10 s padrão do plano gratuito
+ * dariam conta de uma planilha pequena e matariam uma grande no meio.
+ */
+export const maxDuration = 60
+
 /**
  * Importar lista (§9.1).
  *

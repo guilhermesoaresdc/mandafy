@@ -190,6 +190,46 @@ describe.skipIf(!habilitado)('§9.1 — importação de lista', () => {
     expect(resultado.criados).toBe(1)
   })
 
+  /*
+   * Só o banco sabe que estas duas linhas são a mesma pessoa: uma casa pelo
+   * telefone, a outra pelo e-mail. `conferir` não tem como ver isso — para ela
+   * são chaves diferentes. Sem o controle no lado da gravação, a segunda vira
+   * contato novo e bate no índice único.
+   */
+  it('junta duas linhas que caem no mesmo contato por chaves diferentes', async () => {
+    await importarCsv('nome;telefone;email\nMaria;11988887777;maria@exemplo.com\n')
+
+    const { resultado } = await importarCsv(
+      'nome;telefone;email\nMaria;11988887777;\nMaria de novo;;maria@exemplo.com\n',
+    )
+
+    expect(resultado.criados).toBe(0)
+    expect(resultado.atualizados).toBe(1)
+
+    const total = await comoUsuario(async (tx) =>
+      (await tx.select({ id: contacts.id }).from(contacts).where(eq(contacts.orgId, ORG))).length,
+    )
+    expect(total).toBe(1)
+  })
+
+  /* Planilha grande é o caso em que o modo linha a linha morria no tempo. */
+  it('dá conta de um arquivo grande de uma vez', async () => {
+    const linhas = Array.from(
+      { length: 1200 },
+      (_, i) => `Pessoa ${i};119${String(80000000 + i).padStart(8, '0')}`,
+    ).join('\n')
+
+    const { resultado } = await importarCsv(`nome;telefone\n${linhas}\n`, { criarLeads: true })
+
+    expect(resultado.criados).toBe(1200)
+    expect(resultado.leadsCriados).toBe(1200)
+
+    // E de novo: nem contato duplicado, nem lead duplicado.
+    const repetida = await importarCsv(`nome;telefone\n${linhas}\n`, { criarLeads: true })
+    expect(repetida.resultado.criados).toBe(0)
+    expect(repetida.resultado.leadsCriados).toBe(0)
+  })
+
   it('rejeita quem não tem como ser contatado', async () => {
     const { conferencia, resultado } = await importarCsv(
       'nome;telefone;email\nMaria;11988887777;\nFantasma;;\nRuim;123;\n',

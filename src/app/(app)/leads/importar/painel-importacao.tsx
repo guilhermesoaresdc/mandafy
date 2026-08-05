@@ -75,7 +75,20 @@ export function PainelImportacao() {
   function importar() {
     if (!conferencia || conferencia.validas.length === 0) return
     iniciar(async () => {
-      setEstado(await importarAction({ linhas: conferencia.validas, criarLeads }))
+      /*
+       * Rede caída, sessão expirada, função derrubada no meio: nesses casos a
+       * própria chamada rejeita, antes de a ação conseguir devolver mensagem
+       * nenhuma. Sem este `catch` a transição fica sem desfecho e o botão
+       * mostra "Importando…" para sempre — o pior estado possível, porque
+       * parece que ainda está trabalhando.
+       */
+      try {
+        setEstado(await importarAction({ linhas: conferencia.validas, criarLeads }))
+      } catch {
+        setEstado({
+          erro: 'A conexão caiu no meio do envio. Nada foi importado pela metade — a gravação é tudo ou nada. Tente de novo.',
+        })
+      }
     })
   }
 
