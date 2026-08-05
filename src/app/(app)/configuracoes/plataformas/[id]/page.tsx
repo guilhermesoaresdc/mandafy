@@ -10,11 +10,16 @@ import { eventosPorTipo, resumoNoAr } from '@/db/queries/no-ar'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { serverEnv } from '@/env'
 import { ultimoPayload } from '../actions'
+import { MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
 import { PassoEndereco } from './passo-endereco'
+import { UltimoEventoRecebido } from './ultimo-evento'
 import { CombinarCampos } from './combinar-campos'
 
 export const metadata: Metadata = { title: 'Conectar plataforma · Mandafy' }
 export const dynamic = 'force-dynamic'
+
+/** A tradução que o Mandafy já conhece para o nome de cada plataforma. */
+const SUGESTAO_DE_EVENTO: Record<string, string | undefined> = MAPEAMENTO_SUGERIDO.event_map ?? {}
 
 /**
  * Conectar plataforma, em três passos (§4.2).
@@ -86,24 +91,24 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
           </CardHeader>
           <CardBody>
             {ultimo ? (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs text-ink-2">
-                  Último evento em{' '}
-                  <span className="font-mono">
-                    {ultimo.recebidoEm.toLocaleString('pt-BR', { timeZone: user.timezone })}
-                  </span>
-                  .
-                </p>
-                {ultimo.erro ? (
-                  <p className="text-2xs text-warn">
-                    Chegou, mas não foi aproveitado: {ultimo.erro}. Ajuste o passo 3.
-                  </p>
-                ) : null}
-              </div>
+              /*
+                O QUE chegou, e não só QUANDO.
+                
+                A tela dizia "Último evento em 05/08/2026, 13:53:08" e parava
+                aí. Quem acabou de criar uma conta de teste na plataforma não
+                tinha como saber se o que chegou foi o cadastro, o pagamento ou
+                outra coisa qualquer — nem se chegou a virar disparo. Hora sem
+                nome não confirma nada.
+              */
+              <UltimoEventoRecebido
+                evento={ultimo}
+                fuso={user.timezone}
+                sugerido={SUGESTAO_DE_EVENTO[ultimo.nome ?? ''] ?? null}
+              />
             ) : (
               <p className="text-xs text-ink-2">
-                Dispare um evento de teste na plataforma — criar um pedido já serve. Assim que ele
-                chegar, os campos dele aparecem no passo 3 para você combinar.
+                Dispare um evento de teste na plataforma — criar uma conta já serve. Assim que ele
+                chegar, o conteúdo dele aparece aqui e os campos vão para o passo 3.
               </p>
             )}
           </CardBody>

@@ -139,6 +139,96 @@ describe.skipIf(!habilitado)('§7.1 — batimento sem worker', () => {
     return l
   }
 
+  /*
+   * O EVENTO QUE CHEGA VIRA DISPARO NA MESMA PASSAGEM.
+   *
+   * A rota de ingestão grava em `events_raw` e enfileira no BullMQ em passos
+   * separados, para que um Redis fora do ar não derrube o ACK. Sem worker, quem
+   * retomava esses pendentes era a manutenção HORÁRIA — então o evento ficava
+   * parado até uma hora antes de disparar fluxo, e um lembrete de PIX marcado
+   * para +5 minutos saía com 65.
+   *
+   * Nada disso aparece em teste unitário nem no build: o evento fica no banco,
+   * a tela diz "recebido", e o silêncio parece configuração errada.
+   */
+  describe('o evento recém-chegado', () => {
+    const FONTE = uid('c04')
+
+    beforeEach(async () => {
+      await admin`DELETE FROM events WHERE org_id = ${ORG}`
+      await admin`DELETE FROM events_raw WHERE source_id = ${FONTE}`
+      await admin`
+        INSERT INTO sources (id, org_id, name, ingest_token, mapping)
+        VALUES (${FONTE}, ${ORG}, 'Tick', 'tick-token-de-teste-12345',
+                ${JSON.stringify({
+                  event_path: '$.event',
+                  event_map: { qrcode_pago: 'order.paid' },
+                  contact: { external_id: '$.user.id', phone: '$.user.phone' },
+                  fields: { external_id: '$.order.id' },
+                })}::jsonb)
+        ON CONFLICT (id) DO UPDATE SET active = true`
+    })
+
+    afterAll(async () => {
+      await admin`DELETE FROM events WHERE org_id = ${ORG}`
+      await admin`DELETE FROM events_raw WHERE source_id = ${FONTE}`
+      await admin`DELETE FROM sources WHERE id = ${FONTE}`
+    })
+
+    /** Um evento gravado e NÃO enfileirado — o estado em que o Redis o deixa. */
+    async function chegou(corpo: Record<string, unknown>) {
+      await admin`
+        INSERT INTO events_raw (source_id, payload, dedupe_hash)
+        VALUES (${FONTE}, ${JSON.stringify(corpo)}::jsonb, ${`h-${Math.random()}`})`
+    }
+
+    it('é normalizado no tick, sem esperar a manutenção horária', async () => {
+      await chegou({
+        event: 'qrcode_pago',
+        user: { id: 'u-1', phone: '+5511900000001' },
+        order: { id: 'AP-1' },
+      })
+
+      const r = await tick.tickDeEnvio(20_000)
+      expect(r.normalizados).toBe(1)
+
+      const [evento] = await admin<{ type: string }[]>`
+        SELECT type FROM events WHERE org_id = ${ORG} ORDER BY occurred_at DESC LIMIT 1`
+      expect(evento?.type).toBe('order.paid')
+    })
+
+    it('o que já foi processado não volta', async () => {
+      await chegou({
+        event: 'qrcode_pago',
+        user: { id: 'u-2', phone: '+5511900000001' },
+        order: { id: 'AP-2' },
+      })
+
+      expect((await tick.tickDeEnvio(20_000)).normalizados).toBe(1)
+      // Segunda passagem não pode reprocessar: seria a mesma mensagem duas
+      // vezes para o mesmo cliente.
+      expect((await tick.tickDeEnvio(20_000)).normalizados).toBe(0)
+    })
+
+    it('evento que o mapa não conhece não trava a fila', async () => {
+      await chegou({ event: 'inventado', user: { id: 'u-3' } })
+      await chegou({
+        event: 'qrcode_pago',
+        user: { id: 'u-4', phone: '+5511900000001' },
+        order: { id: 'AP-4' },
+      })
+
+      // O recusado fica marcado com o motivo e sai do caminho; o bom passa.
+      const r = await tick.tickDeEnvio(20_000)
+      expect(r.normalizados).toBe(1)
+
+      const [pendentes] = await admin<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM events_raw
+        WHERE source_id = ${FONTE} AND processed_at IS NULL`
+      expect(pendentes?.n).toBe(0)
+    })
+  })
+
   it('envia o que já venceu', async () => {
     const n = await agendar(-60)
 
