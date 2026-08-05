@@ -32,12 +32,10 @@ import { Button, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
  * `tests/mapeamento.test.ts` compara as duas listas.
  */
 const POR_EVENTO = [
-  { plataforma: 'novo_usuario', rotulo: 'Novo Usuário' },
-  { plataforma: 'qrcode_criado', rotulo: 'Qrcode Criado' },
-  { plataforma: 'qrcode_pago', rotulo: 'Qrcode Pago' },
-  { plataforma: 'bilhete_premiado', rotulo: 'Bilhete Premiado' },
-  { plataforma: 'saque_pendente', rotulo: 'Saque Pendente' },
-  { plataforma: 'saque_finalizado', rotulo: 'Saque Finalizado' },
+  { plataforma: 'new-user', rotulo: 'Novo Usuário' },
+  { plataforma: 'qrcode-created', rotulo: 'Qrcode Criado' },
+  { plataforma: 'payment-by-deposit', rotulo: 'Depósito Confirmado' },
+  { plataforma: 'payment-by-game', rotulo: 'Ticket Premiado' },
 ] as const
 
 function Linha({ endereco, rotulo }: { endereco: string; rotulo?: string }) {

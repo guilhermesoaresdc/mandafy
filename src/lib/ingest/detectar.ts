@@ -127,7 +127,17 @@ const CONTATO: Record<string, Regra> = {
  */
 const CAMPOS: Record<string, Regra> = {
   external_id: {
-    nomes: ['order_id', 'pedido_id', 'aposta_id', 'bet_id', 'transaction_id', 'codigo', 'id'],
+    nomes: [
+      'order_id',
+      'pedido_id',
+      'aposta_id',
+      'bet_id',
+      // `ticket-id`, normalizado: é o identificador da aposta premiada.
+      'ticket_id',
+      'transaction_id',
+      'codigo',
+      'id',
+    ],
     pais: PAIS_DA_APOSTA,
     recusa: (v) => texto(v) && (v.includes(' ') || v.length > 64),
   },
@@ -173,10 +183,19 @@ const CAMPOS: Record<string, Regra> = {
   },
 }
 
-/** O último segmento do caminho, em minúsculas e sem separadores. */
+/**
+ * O último segmento do caminho, normalizado.
+ *
+ * Hífen vira sublinhado porque as duas grafias convivem no mesmo payload:
+ * a documentação da plataforma real manda `ticket-id` ao lado de `user_id`.
+ * Comparar por igualdade sem isto faria `ticket-id` não bater com nada.
+ */
 function folhaDe(caminho: string): string {
   const bruto = caminho.split('.').pop() ?? ''
-  return bruto.replace(/\[\d+\]/g, '').toLowerCase()
+  return bruto
+    .replace(/\[\d+\]/g, '')
+    .replace(/-/g, '_')
+    .toLowerCase()
 }
 
 function pontuar(caminho: string, valor: unknown, regra: Regra): number {
@@ -309,10 +328,23 @@ const SINONIMOS: Record<CanonicalEvent, string[]> = {
     'pix pago',
     'pix paid',
     'pagamento',
-    'payment',
-    'paid',
     'aposta paga',
     'bet paid',
+    /*
+     * `payment-by-deposit` é como o Techloto chama o PIX que caiu — nem
+     * "pago", nem "qrcode": o nome descreve o MEIO, não o desfecho. É o evento
+     * mais importante da cadeia, porque é ele que manda parar os lembretes de
+     * recuperação. Não reconhecê-lo deixaria a pessoa recebendo "seu PIX ainda
+     * está aberto" depois de ter pagado.
+     */
+    'payment by deposit',
+    'payment by pix',
+    'deposit',
+    'deposito',
+    'pix recebido',
+    'payment received',
+    'pagamento recebido',
+    'pagamento confirmado',
   ],
   'order.expired': ['expirou', 'expired', 'qrcode expired', 'qrcode expirado', 'pix expirado'],
   'order.cancelled': [
@@ -330,6 +362,17 @@ const SINONIMOS: Record<CanonicalEvent, string[]> = {
     'ganhou',
     'winner',
     'prize',
+    /*
+     * `payment-by-game` é PRÊMIO, não pagamento — a documentação da plataforma
+     * o descreve como "Ticket Premiado". O nome engana de propósito: para ela,
+     * os dois são movimentações de dinheiro, e a diferença é a direção.
+     *
+     * Confundi-los é o erro mais caro que esta tabela permite: quem acabou de
+     * ganhar receberia "aposta confirmada, boa sorte" em vez do aviso de
+     * prêmio, e quem só apostou receberia parabéns por nada.
+     */
+    'payment by game',
+    'game payment',
   ],
   'withdrawal.pending': [
     'saque pendente',

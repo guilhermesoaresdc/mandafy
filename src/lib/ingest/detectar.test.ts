@@ -134,6 +134,13 @@ describe('§4.1 — o nome do evento traduzido', () => {
     }
 
     expect(eventoCanonicoDe('qrcode-created')).toBe('order.created')
+
+    /*
+     * O nome do pagamento descreve o MEIO, não o desfecho — e é o evento que
+     * manda parar os lembretes de recuperação. Não reconhecê-lo deixa a pessoa
+     * recebendo "seu PIX ainda está aberto" depois de ter pagado.
+     */
+    expect(eventoCanonicoDe('payment-by-deposit')).toBe('order.paid')
     expect(eventoCanonicoDe('qrcode-paid')).toBe('order.paid')
     expect(eventoCanonicoDe('qrcode_pago')).toBe('order.paid')
     expect(eventoCanonicoDe('bilhete_premiado')).toBe('ticket.awarded')
@@ -145,5 +152,91 @@ describe('§4.1 — o nome do evento traduzido', () => {
     // para quem acabou de se cadastrar.
     expect(eventoCanonicoDe('xpto')).toBeNull()
     expect(eventoCanonicoDe('')).toBeNull()
+  })
+})
+
+/**
+ * Os payloads da DOCUMENTAÇÃO da plataforma (§4.2).
+ *
+ * Diferentes do que ela manda de verdade: o que chega traz `name`, `email`,
+ * `id` e `user_id`; o documentado tem só `cpf`, `phone`, `event` e o valor. O
+ * contrato escrito é o piso — quem integrar amanhã pode receber só isso, e a
+ * detecção precisa continuar de pé com o mínimo.
+ */
+describe('§4.2 — o contrato documentado da plataforma', () => {
+  const NOVO_USUARIO = {
+    cpf: '02676236075',
+    phone: '(11)97242-5144',
+    event: 'new-user',
+    clickId: 'abc123',
+  }
+
+  const DEPOSITO = {
+    cpf: '02676236075',
+    phone: '(11)97242-5144',
+    event: 'payment-by-deposit',
+    value: 10.0,
+    date: '2026-08-05 14:50:09',
+    count: 10,
+  }
+
+  const PREMIADO = {
+    cpf: '02676236075',
+    phone: '(11)97242-5144',
+    event: 'payment-by-game',
+    value: 10.0,
+    'ticket-id': 'abc123',
+    date: '2026-08-05 14:50:09',
+  }
+
+  it('o prêmio NÃO é confundido com pagamento', () => {
+    /*
+     * O erro mais caro que a tabela de eventos permite. Os dois nomes começam
+     * com `payment-` porque, para a plataforma, são movimentações de dinheiro
+     * e a diferença é a direção. Trocá-los faria quem ganhou receber "aposta
+     * confirmada, boa sorte" e quem só apostou receber parabéns por nada.
+     */
+    expect(eventoCanonicoDe('payment-by-game')).toBe('ticket.awarded')
+    expect(eventoCanonicoDe('payment-by-deposit')).toBe('order.paid')
+  })
+
+  it('acha a identidade com o mínimo documentado: só CPF e telefone', () => {
+    const d = detectarMapeamento(NOVO_USUARIO)
+
+    // Sem `name` e sem `email` no contrato — o contato é encontrado pelo
+    // telefone, e é ele que precisa estar mapeado para a mensagem ter destino.
+    expect(d.contato.phone?.caminho).toBe('$.phone')
+    expect(d.contato.cpf?.caminho).toBe('$.cpf')
+    expect(d.contato.name).toBeUndefined()
+  })
+
+  it('o telefone mascarado é reconhecido como telefone', () => {
+    // A documentação escreve `(dd)xxxxx-xxxx`. Exigir E.164 aqui deixaria o
+    // campo mais importante da integração sem palpite.
+    expect(detectarMapeamento(DEPOSITO).contato.phone?.caminho).toBe('$.phone')
+  })
+
+  it('acha o valor do depósito', () => {
+    expect(detectarMapeamento(DEPOSITO).campos.valor_cents?.caminho).toBe('$.value')
+  })
+
+  it('`ticket-id` com hífen vira o número da aposta', () => {
+    // As duas grafias convivem no mesmo payload: `ticket-id` ao lado de
+    // `user_id`. Comparar por igualdade sem normalizar deixaria o hifenizado
+    // sem palpite nenhum.
+    expect(detectarMapeamento(PREMIADO).campos.external_id?.caminho).toBe('$.ticket-id')
+  })
+
+  it('`date` sem fuso não vira hora de fechamento', () => {
+    // A documentação usa `YYYY-MM-DD HH:mm:ss`. É quando aconteceu, não o
+    // prazo — usá-lo como prazo faria toda mensagem dizer que já fechou.
+    expect(detectarMapeamento(DEPOSITO).campos.fecha_em).toBeUndefined()
+  })
+
+  it('os parâmetros de rastreio não viram campo de mensagem', () => {
+    // `clickId`, `afiliate_code` e `GtmId` são do marketing de quem integrou.
+    // Qualquer um deles virando "número da aposta" quebraria o cancelamento.
+    const d = detectarMapeamento({ ...NOVO_USUARIO, afiliate_code: 'x', GtmId: 'y' })
+    expect(d.campos.external_id).toBeUndefined()
   })
 })
