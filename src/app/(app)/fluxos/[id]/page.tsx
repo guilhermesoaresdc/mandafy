@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { withTenant } from '@/db'
 import { buscarFluxo } from '@/db/queries/flows'
+import { listarMensagens } from '@/db/queries/messages'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ChannelIcon } from '@/components/ui'
 import { CHANNEL_LABELS, CHANNELS } from '@/db/schema/enums'
@@ -18,10 +19,26 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
   const { id } = await params
   const user = await requireAdmin()
 
-  const completo = await withTenant(tenantOf(user), (tx) => buscarFluxo(tx, id))
+  // As duas na mesma transação: a lista de mensagens alimenta o seletor de cada
+  // passo, e abrir uma segunda conexão para ela seria outra ida ao banco por
+  // uma tela que já é `force-dynamic`.
+  const { completo, mensagens } = await withTenant(tenantOf(user), async (tx) => ({
+    completo: await buscarFluxo(tx, id),
+    mensagens: await listarMensagens(tx),
+  }))
   if (!completo) notFound()
 
   const { fluxo, passos, condicoesEntrada, ritmo } = completo
+
+  /*
+   * Só as ativas, e sem as que o próprio fluxo já usa não — usar a mesma
+   * mensagem em dois passos é legítimo (um lembrete que se repete). O que não
+   * faz sentido é oferecer uma mensagem pausada: ela não sairia, e o passo
+   * ficaria com um defeito que só aparece no histórico.
+   */
+  const opcoes = mensagens
+    .filter((m) => m.active)
+    .map((m) => ({ id: m.id, nome: m.name, chave: m.key }))
 
   return (
     <SessionFrame
@@ -118,51 +135,80 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
               passos.map((passo) => (
                 <div
                   key={passo.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line px-3 py-2"
+                  className="flex flex-col gap-2 rounded-lg border border-line px-3 py-2"
                 >
-                  <span className="w-16 shrink-0 font-mono text-2xs text-ink">
-                    {passo.offsetLabel}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <span className="w-16 shrink-0 font-mono text-2xs text-ink">
+                      {passo.offsetLabel}
+                      {/*
+                        A hora marcada é o que separa "+2 dias" de "+2 dias às
+                        10h", e sem ela na lista os dois passos ficam idênticos
+                        na tela e diferentes no envio.
+                      */}
+                      {passo.sendAtLocal ? (
+                        <span className="block text-pending">às {passo.sendAtLocal}</span>
+                      ) : null}
+                    </span>
 
-                  <div className="min-w-36 flex-1">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/mensagens/${passo.messageId}`}
-                        className="truncate text-xs text-ink underline-offset-2 hover:underline"
-                      >
-                        {passo.messageName}
-                      </Link>
-                      {passo.messageAtiva ? null : <Badge tone="fail">pausada</Badge>}
-                    </div>
-                    <p className="truncate font-mono text-2xs text-pending">{passo.messageKey}</p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {CHANNELS.map((canal) => {
-                      // Sem override, valem os canais ligados na mensagem.
-                      const ligado = passo.canais ? passo.canais.includes(canal) : null
-                      return (
-                        <span
-                          key={canal}
-                          title={
-                            ligado === null
-                              ? `${CHANNEL_LABELS[canal]}: segue a mensagem`
-                              : `${CHANNEL_LABELS[canal]}: ${ligado ? 'ligado' : 'desligado'}`
-                          }
-                          className={ligado === false ? 'opacity-20' : ligado ? '' : 'opacity-50'}
+                    <div className="min-w-36 flex-1">
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/mensagens/${passo.messageId}`}
+                          className="truncate text-xs text-ink underline-offset-2 hover:underline"
                         >
-                          <ChannelIcon channel={canal} className="size-3.5" aria-hidden="true" />
-                        </span>
-                      )
-                    })}
+                          {passo.messageName}
+                        </Link>
+                        {passo.messageAtiva ? null : <Badge tone="fail">pausada</Badge>}
+                      </div>
+                      <p className="truncate font-mono text-2xs text-pending">{passo.messageKey}</p>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      {CHANNELS.map((canal) => {
+                        // Sem override, valem os canais ligados na mensagem.
+                        const ligado = passo.canais ? passo.canais.includes(canal) : null
+                        return (
+                          <span
+                            key={canal}
+                            title={
+                              ligado === null
+                                ? `${CHANNEL_LABELS[canal]}: segue a mensagem`
+                                : `${CHANNEL_LABELS[canal]}: ${ligado ? 'ligado' : 'desligado'}`
+                            }
+                            className={ligado === false ? 'opacity-20' : ligado ? '' : 'opacity-50'}
+                          >
+                            <ChannelIcon channel={canal} className="size-3.5" aria-hidden="true" />
+                          </span>
+                        )
+                      })}
+                    </div>
+
+                    <EditarPasso
+                      flowId={fluxo.id}
+                      stepId={passo.id}
+                      delaySeconds={passo.delaySeconds}
+                      sendAtLocal={passo.sendAtLocal}
+                      messageId={passo.messageId}
+                      position={passo.position}
+                      opcoes={opcoes}
+                    />
                   </div>
 
-                  <EditarPasso
-                    flowId={fluxo.id}
-                    stepId={passo.id}
-                    delaySeconds={passo.delaySeconds}
-                    position={passo.position}
-                  />
+                  {/*
+                    O TEXTO, e não só o nome da mensagem.
+                    "Boas-vindas" não responde "o que a pessoa vai receber" — e
+                    era essa a pergunta de quem abria esta tela. Conferir exigia
+                    sair daqui, ler noutra tela e voltar, uma vez por passo.
+                  */}
+                  {passo.amostra ? (
+                    <p className="line-clamp-2 border-t border-line pt-2 text-2xs leading-relaxed text-ink-2">
+                      {passo.amostra}
+                    </p>
+                  ) : (
+                    <p className="border-t border-line pt-2 text-2xs text-warn">
+                      Esta mensagem está em branco — o passo não vai enviar nada.
+                    </p>
+                  )}
                 </div>
               ))
             )}

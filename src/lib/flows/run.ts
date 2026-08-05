@@ -23,6 +23,17 @@ import { planejarCascata } from './schedule'
 
 const log = createLogger('fluxos')
 
+/**
+ * O relógio da operação — o mesmo para a janela de silêncio e para o horário
+ * fixo de um passo.
+ *
+ * `organizations.timezone` existe e é onde isto vai morar no dia em que houver
+ * uma banca fora do horário de Brasília. Enquanto for uma constante, ela fica
+ * com NOME e num lugar só: duas cópias de `'America/Sao_Paulo'` espalhadas pelo
+ * arquivo é como uma delas muda sozinha.
+ */
+const FUSO_DA_OPERACAO = 'America/Sao_Paulo'
+
 export type EventoParaFluxo = {
   orgId: string
   tipo: string
@@ -174,7 +185,13 @@ async function dispararFluxo(
     ...passos.map((p) => p.jitterProfileId),
   ])
 
-  const agenda = planejarCascata(passos, agora)
+  /*
+   * O MESMO fuso da janela de silêncio, logo abaixo, e de propósito: se o
+   * horário do passo e a janela lessem relógios diferentes, um passo marcado
+   * para "às 8:00" poderia cair dentro de uma janela que termina "às 8:00" e
+   * ser adiado para o dia seguinte — sem nada na tela explicando.
+   */
+  const agenda = planejarCascata(passos, agora, FUSO_DA_OPERACAO)
   const envios: ResultadoCanal[] = []
 
   for (const marcado of agenda) {
@@ -211,7 +228,7 @@ async function dispararFluxo(
               janela: {
                 inicio: fluxo.quietStart.slice(0, 5),
                 fim: fluxo.quietEnd.slice(0, 5),
-                fuso: 'America/Sao_Paulo',
+                fuso: FUSO_DA_OPERACAO,
               },
             }
           : {}),

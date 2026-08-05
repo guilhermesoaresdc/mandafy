@@ -88,6 +88,16 @@ export const flowSteps = pgTable(
     position: integer('position').notNull(),
     /** Relativo ao passo anterior, não ao início do fluxo (§3.5). */
     delaySeconds: integer('delay_seconds').notNull().default(0),
+    /**
+     * Hora do relógio em que o passo sai, no fuso da organização. `'10:00'`.
+     *
+     * Nulo — o padrão — mantém o instante que a cascata calculou, que é o certo
+     * para recuperação: um lembrete de +5 min adiado para as 10h não é um
+     * lembrete. Preenchido, o instante é EMPURRADO PARA A FRENTE até a próxima
+     * ocorrência daquela hora; nunca para trás, senão um passo poderia sair
+     * antes do anterior.
+     */
+    sendAtLocal: text('send_at_local'),
     jitterProfileId: uuid('jitter_profile_id').references(() => jitterProfiles.id, {
       onDelete: 'set null',
     }),

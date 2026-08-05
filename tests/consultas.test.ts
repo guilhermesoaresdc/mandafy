@@ -242,14 +242,15 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
         await tx`DELETE FROM messages WHERE id IN (${MSG_A}, ${MSG_B})`
 
         await tx`INSERT INTO messages (id, org_id, key, name, body, active) VALUES
-          (${MSG_A}, ${ORG}, 'passo_a', 'Passo A', 'oi', true),
+          (${MSG_A}, ${ORG}, 'passo_a', 'Passo A',
+           ${'{Oi|Olá} {{nome|primeiro_nome|"tudo bem"}}! Seu PIX de **{{valor_cents|moeda}}** ainda não caiu.'}, true),
           (${MSG_B}, ${ORG}, 'passo_b', 'Passo B', 'oi', false)`
         await tx`INSERT INTO flows (id, org_id, name, trigger_event, cancel_on, cancel_key_template)
           VALUES (${FLUXO}, ${ORG}, 'Recuperação', 'order.created',
                   ARRAY['order.paid'], 'order:{{external_id}}')`
-        await tx`INSERT INTO flow_steps (flow_id, position, delay_seconds, message_id) VALUES
-          (${FLUXO}, 1, 300,  ${MSG_A}),
-          (${FLUXO}, 2, 1200, ${MSG_B})`
+        await tx`INSERT INTO flow_steps (flow_id, position, delay_seconds, message_id, send_at_local) VALUES
+          (${FLUXO}, 1, 300,  ${MSG_A}, NULL),
+          (${FLUXO}, 2, 1200, ${MSG_B}, '10:00')`
       })
     })
 
@@ -275,6 +276,42 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
       // +5min e depois +20min viram "+5 min" e "+25 min" desde o gatilho.
       expect(completo?.passos.map((p) => p.offsetLabel)).toEqual(['+5 min', '+25 min'])
       expect(completo?.passos.map((p) => p.delaySeconds)).toEqual([300, 1200])
+    })
+
+    /*
+     * A tela do fluxo mostrava só o NOME da mensagem, e nome não é conteúdo:
+     * "Boas-vindas" não diz se o texto está em branco, se ainda fala de rifa ou
+     * se é o que a pessoa espera receber. Conferir exigia abrir outra tela por
+     * passo — e por isso ninguém conferia.
+     */
+    it('o detalhe traz o TEXTO de cada passo, pronto para ler', async () => {
+      const completo = await comoUsuario((tx) => buscarFluxo(tx, FLUXO))
+      const primeiro = completo?.passos[0]
+
+      // Compilado com o contato de exemplo: sem `{{…}}`, sem spintax e sem os
+      // marcadores de negrito, que viram ruído numa linha sem negrito de verdade.
+      expect(primeiro?.amostra).toContain('Maria')
+      expect(primeiro?.amostra).toContain('R$ 5,00')
+      expect(primeiro?.amostra).not.toMatch(/[{}|*]/)
+      // Uma linha só: a lista corta em duas, e a quebra desperdiçaria metade.
+      expect(primeiro?.amostra).not.toContain('\n')
+    })
+
+    it('a amostra é estável entre carregamentos, apesar do spintax', async () => {
+      // Semente presa ao id do passo. Sem isso a tela mudaria de texto sozinha a
+      // cada F5, o que parece defeito.
+      const uma = await comoUsuario((tx) => buscarFluxo(tx, FLUXO))
+      const outra = await comoUsuario((tx) => buscarFluxo(tx, FLUXO))
+
+      expect(uma?.passos.map((p) => p.amostra)).toEqual(outra?.passos.map((p) => p.amostra))
+    })
+
+    it('a hora marcada do passo chega à tela', async () => {
+      const completo = await comoUsuario((tx) => buscarFluxo(tx, FLUXO))
+
+      // `time` do Postgres volta como '10:00:00'; a tela lê '10:00'. Sem o corte
+      // a lista mostraria os segundos que ninguém digitou.
+      expect(completo?.passos.map((p) => p.sendAtLocal)).toEqual([null, '10:00'])
     })
 
     /*

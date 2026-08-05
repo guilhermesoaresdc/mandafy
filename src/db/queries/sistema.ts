@@ -83,7 +83,7 @@ export type EstadoSistema = {
     ultimaZeragem: Date | null
     configurado: boolean
   }
-  fila: { vencidos: number; futuros: number }
+  fila: { vencidos: number; futuros: number; esperaMaxSegundos: number }
   /** Erro ao consultar — o banco pode estar fora, e a tela precisa dizer isso. */
   erro?: string
 }
@@ -93,7 +93,7 @@ export async function estadoDoSistema(): Promise<EstadoSistema> {
     migrations: { pendentes: [], aplicadas: 0, total: 0 },
     rls: { papelExiste: false, papelAtual: '?', ignoraPoliticas: false, tabelasComRls: 0 },
     batimento: { ultimaManutencao: null, ultimaZeragem: null, configurado: false },
-    fila: { vencidos: 0, futuros: 0 },
+    fila: { vencidos: 0, futuros: 0, esperaMaxSegundos: 0 },
   }
 
   try {
