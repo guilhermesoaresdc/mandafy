@@ -108,11 +108,45 @@ export default async function SistemaPage() {
               </ul>
             )}
 
+            {/*
+              A PERMISSÃO, ANTES DO CLIQUE.
+              Ler `_migrations` o papel da aplicação consegue; criar tabela, não.
+              Então a tela contava "11 de 25" com toda a confiança e só o clique
+              revelava `permission denied for schema public` — o diagnóstico
+              parecia do botão quando era da conexão. Quem viu isso concluiu, com
+              razão, que o botão não servia para nada.
+            */}
+            {estado.migrations.podeAplicar ? null : (
+              <div className="rounded-lg border border-fail/40 px-3 py-2 text-2xs text-ink-2">
+                <p className="text-fail">
+                  Este botão não consegue aplicar: a conexão não tem permissão para alterar o banco.
+                </p>
+                <p className="mt-1">
+                  Ela está conectada como{' '}
+                  <span className="font-mono text-ink">{estado.migrations.papel}</span>, o papel da
+                  aplicação — que por projeto não cria nem altera tabela. É isso que faz o
+                  isolamento entre organizações valer, então dar essa permissão a ele seria a
+                  correção errada.
+                </p>
+                <p className="mt-1">
+                  A certa é definir <span className="font-mono">DATABASE_URL_ADMIN</span> nas
+                  variáveis do projeto, com o usuário dono do banco — no Supabase, o{' '}
+                  <span className="font-mono">postgres</span> — e publicar de novo. Depois disso as
+                  pendentes passam a ser aplicadas sozinhas a cada deploy, sem ninguém colar SQL. O
+                  passo a passo está em <span className="font-mono">docs/supabase.md</span>.
+                </p>
+                <p className="mt-1 text-pending">
+                  Reaplicar o que você já colou à mão é seguro: toda migration deste repositório é
+                  escrita para poder rodar duas vezes.
+                </p>
+              </div>
+            )}
+
             <BotaoDeSistema
               acao={migrarAction}
               rotulo="Aplicar agora"
               rotuloOcupado="Aplicando…"
-              variante={migrationsEmDia ? 'secondary' : 'primary'}
+              variante={migrationsEmDia || !estado.migrations.podeAplicar ? 'secondary' : 'primary'}
             />
           </CardBody>
         </Card>

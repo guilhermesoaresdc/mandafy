@@ -125,22 +125,84 @@ export async function runMigrations(
   }
 }
 
+/**
+ * Traduz a recusa do Postgres em instrução.
+ *
+ * `permission denied for schema public` é uma frase exata e correta que não diz
+ * NADA a quem opera pelo navegador. A causa é sempre a mesma: `DATABASE_URL_ADMIN`
+ * não está definida, `adminUrl()` cai para `DATABASE_URL` — o papel da aplicação,
+ * que por projeto não pode criar tabela — e o botão recusa.
+ *
+ * O detalhe que fecha o raciocínio, e que a mensagem crua esconde: ler
+ * `_migrations` esse papel CONSEGUE. Por isso a tela mostra "11 de 25 aplicadas"
+ * com toda a confiança e só quebra no clique — o diagnóstico parece do botão
+ * quando é da conexão.
+ */
+export function explicarFalha(erro: unknown): string {
+  const bruto = erro instanceof Error ? erro.message : String(erro)
+  const codigo = (erro as { code?: string } | null)?.code
+
+  // 42501 = insufficient_privilege. A frase varia com a versão e com o idioma
+  // do servidor; o código, não.
+  if (codigo === '42501' || /permission denied|permissão negada/i.test(bruto)) {
+    return (
+      `${bruto}\n\n` +
+      'O banco recusou por falta de permissão, e não por erro no SQL. A conexão ' +
+      'usada aqui é a do papel da aplicação, que por projeto não pode criar nem ' +
+      'alterar tabela — é isso que faz o isolamento entre organizações valer.\n\n' +
+      'Defina DATABASE_URL_ADMIN nas variáveis do projeto, com o usuário dono do ' +
+      'banco (no Supabase é o "postgres"), e publique de novo. Depois disso este ' +
+      'botão funciona e as migrations também passam a ser aplicadas sozinhas a ' +
+      'cada deploy. Ver docs/supabase.md.'
+    )
+  }
+
+  return bruto
+}
+
 /** As migrations que ainda não rodaram, sem aplicar nada. Para o painel. */
 export async function migrationsPendentes(): Promise<{
   pendentes: string[]
   aplicadas: number
   total: number
+  /**
+   * O papel com que as migrations seriam aplicadas, e se ele PODE aplicá-las.
+   *
+   * Sem isto a tela listava catorze pendentes, oferecia o botão e só no clique
+   * revelava que a conexão não tem permissão. A pergunta "então pra que serve
+   * este botão?" é a resposta certa a uma tela que esconde isso até o último
+   * momento.
+   */
+  papel: string
+  podeAplicar: boolean
 }> {
   const url = adminUrl()
   const sql = postgres(url, { max: 1, prepare: !usesTransactionPooler(url), onnotice: () => {} })
 
   try {
+    const [quem] = await sql<{ papel: string; pode: boolean }[]>`
+      SELECT current_user AS papel,
+             -- CREATE no schema public é exatamente o que toda migration precisa
+             -- e o que o papel da aplicação não tem. Perguntar ao Postgres em vez
+             -- de comparar nomes: o papel pode se chamar qualquer coisa.
+             has_schema_privilege(current_user, 'public', 'CREATE') AS pode
+    `
+
     const existe = await sql<{ ok: boolean }[]>`
       SELECT to_regclass('public._migrations') IS NOT NULL AS ok
     `
 
+    const papel = quem?.papel ?? '?'
+    const podeAplicar = quem?.pode ?? false
+
     if (!existe[0]?.ok) {
-      return { pendentes: MIGRATIONS.map((m) => m.nome), aplicadas: 0, total: MIGRATIONS.length }
+      return {
+        pendentes: MIGRATIONS.map((m) => m.nome),
+        aplicadas: 0,
+        total: MIGRATIONS.length,
+        papel,
+        podeAplicar,
+      }
     }
 
     const linhas = await sql<{ name: string }[]>`SELECT name FROM _migrations`
@@ -150,6 +212,8 @@ export async function migrationsPendentes(): Promise<{
       pendentes: MIGRATIONS.filter((m) => !nomes.has(m.nome)).map((m) => m.nome),
       aplicadas: nomes.size,
       total: MIGRATIONS.length,
+      papel,
+      podeAplicar,
     }
   } finally {
     await sql.end({ timeout: 5 })
