@@ -5,9 +5,9 @@ import postgres from 'postgres'
 import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { buscarMensagem } from '@/db/queries/messages'
-import { CHANNELS } from '@/db/schema/enums'
-import { compilar } from '@/lib/messages/compile'
-import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
+import { CHANNELS, type Channel } from '@/db/schema/enums'
+import { compilar, variaveisDoCorpo } from '@/lib/messages/compile'
+import { CONTATO_EXEMPLO, VARIAVEIS_DISPONIVEIS } from '@/lib/messages/exemplo'
 import { contarSms, foraDoGsm7, paraGsm7, removerEmoji } from '@/lib/messages/gsm'
 import { linhasDoModelo, acharModelo } from '@/lib/messages/aplicar-modelo'
 import { MENSAGENS, type ModeloMensagem } from '@/lib/messages/modelos'
@@ -85,6 +85,115 @@ describe('§6.1 — o catálogo de modelos', () => {
         semente: 7,
       })
       expect(r.ok, `${modelo.key}: ${r.ok ? '' : `${r.motivo} ${(r.variaveis ?? []).join(',')}`}`).toBe(true)
+    }
+  })
+
+  /*
+   * A REGRA QUE GOVERNA O CATÁLOGO INTEIRO: nenhuma variável é obrigatória.
+   *
+   * §6.3 manda a notificação falhar com `variavel_ausente` quando uma variável
+   * vem vazia, e está certo — o cliente não pode receber `Oi {{nome}}!`
+   * literal. A consequência é que cada `{{…}}` sem padrão declarado é um ponto
+   * de falha SILENCIOSA: a mensagem não sai, e nada na tela diz o porquê.
+   *
+   * E o catálogo é o ponto de partida de quem ACABOU de conectar a plataforma.
+   * A que originou este projeto manda nome, telefone, e-mail, valor e o
+   * identificador da transação — não manda sorteio, palpite, modalidade,
+   * horário de fechamento nem link de pagamento. Escrito para o payload ideal,
+   * o catálogo compilava na prévia (que usa `CONTATO_EXEMPLO`, onde tudo
+   * existe) e falhava em produção, justamente nas mensagens que mais importam:
+   * a cadência de PIX inteira, a confirmação da aposta e o aviso de prêmio.
+   *
+   * Por isso o caso abaixo compila com dados VAZIOS, e não com o exemplo. É a
+   * única versão do teste que pega o modelo escrito amanhã.
+   */
+  it('todo modelo compila SEM NENHUM DADO — nenhuma variável é obrigatória', () => {
+    const canais: Channel[] = [...CHANNELS]
+
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      /*
+       * Corpo, assunto e TODAS as variantes escritas à mão — inclusive o
+       * assunto e o preheader do e-mail. Uma variável sem padrão no ASSUNTO é a
+       * pior de todas: não é uma frase que sai errada, é o e-mail inteiro que
+       * não sai.
+       */
+      const textos: [string, string][] = [
+        ['corpo', modelo.body],
+        ...(modelo.subject ? ([['assunto', modelo.subject]] as [string, string][]) : []),
+        ...canais.flatMap((canal): [string, string][] => {
+          const v = modelo.variantes?.[canal]
+          if (!v) return []
+          return [
+            ...(v.body ? ([[`${canal}.corpo`, v.body]] as [string, string][]) : []),
+            ...(v.subject ? ([[`${canal}.assunto`, v.subject]] as [string, string][]) : []),
+            ...(v.preheader ? ([[`${canal}.preheader`, v.preheader]] as [string, string][]) : []),
+          ]
+        }),
+      ]
+
+      for (const [onde, fonte] of textos) {
+        /*
+         * Semente a semente: o spintax sorteia UMA alternativa por compilação,
+         * e uma variável que só aparece num dos ramos passaria despercebida na
+         * semente sorteada — para reaparecer no envio em que aquele ramo saísse.
+         */
+        for (let semente = 0; semente < 12; semente++) {
+          const r = compilar(fonte, { canal: 'whatsapp', dados: {}, previa: false, semente })
+          expect(
+            r.ok,
+            `${modelo.key} (${onde}, semente ${semente}) exige ${r.ok ? '' : (r.variaveis ?? []).join(', ')}`,
+          ).toBe(true)
+        }
+      }
+    }
+  })
+
+  /*
+   * O padrão salva a mensagem; ele não pode virar o texto que sempre sai.
+   *
+   * `{{primeiro_nome|"tudo bem"}}` é o exemplo real: `primeiro_nome` é um
+   * FILTRO, não um campo, e nada em produção o grava — o que chega do webhook é
+   * `nome`. As quatro variantes de SMS da cadência de PIX estavam escritas
+   * assim, então TODAS caíam no padrão: o cliente lia "Oi tudo bem!" com o nome
+   * dele salvo na base ao lado. Nada falhava, nada aparecia no histórico.
+   *
+   * A regra que impede a volta disso: toda variável citada pelo catálogo tem de
+   * existir no contato de exemplo. Se a prévia sabe preencher, é porque o campo
+   * é real.
+   */
+  it('nenhum modelo cita variável que não existe de verdade', () => {
+    const reais = new Set(VARIAVEIS_DISPONIVEIS)
+
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const fontes = [
+        modelo.body,
+        modelo.subject ?? '',
+        ...CHANNELS.flatMap((canal) => {
+          const v = modelo.variantes?.[canal]
+          return [v?.body ?? '', v?.subject ?? '', v?.preheader ?? '']
+        }),
+      ]
+
+      for (const nome of fontes.flatMap(variaveisDoCorpo)) {
+        expect(reais.has(nome), `${modelo.key} cita "${nome}", que ninguém preenche`).toBe(true)
+      }
+    }
+  })
+
+  /*
+   * O outro lado da mesma regra: o padrão precisa produzir uma FRASE, não um
+   * buraco. `Prêmio: ** **` compila, passa no caso acima e chega ao cliente.
+   */
+  it('sem dado nenhum, o texto sai sem buraco e sem marcador solto', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const r = compilar(modelo.body, { canal: 'whatsapp', dados: {}, previa: false, semente: 3 })
+      expect(r.ok).toBe(true)
+      if (!r.ok) continue
+
+      expect(r.corpo, `espaço duplo em ${modelo.key}`).not.toMatch(/ {2}/)
+      expect(r.corpo, `pontuação órfã em ${modelo.key}`).not.toMatch(/[:,]\s*[.\n]|\s+[.,!?]/)
+      // `*` do WhatsApp sempre em par, e nunca em volta de nada.
+      expect(r.corpo, `negrito vazio em ${modelo.key}`).not.toMatch(/\*\s*\*/)
     }
   })
 
@@ -199,26 +308,23 @@ describe('§6.4 — todo modelo cabe em um segmento de SMS', () => {
   /**
    * O caso ruim, e não o bonito.
    *
-   * O contato de exemplo tem nome curto, valor de dois dígitos e uma URL de 49
-   * caracteres. A realidade tem "WELLINGTON APARECIDO", R$ 1.234,56 e um
-   * checkout com uuid no caminho. Medir só pelo exemplo é medir o que não
-   * acontece.
+   * O contato de exemplo tem nome curto e valor de dois dígitos. A realidade
+   * tem "WELLINGTON APARECIDO", R$ 1.234,56 e um nome de sorteio que alguém
+   * digitou à mão. Medir só pelo exemplo é medir o que não acontece.
    */
   const PESSIMISTA = {
     ...CONTATO_EXEMPLO,
     nome: 'WELLINGTON APARECIDO GONÇALVES',
-    primeiro_nome: 'Wellington',
     valor_cents: 123456,
     retorno_cents: 9876543,
     saldo_cents: 123456,
+    external_id: 'ap_9f2c1b44-8e0a-4d77-b1c2-5e6a7f8d9012',
     // Com travessão de propósito: nome de sorteio é texto livre digitado por
     // quem opera a banca, e era ele — não o acento — que mantinha sete modelos
     // em UCS-2 mesmo com "remover acentuação" ligado.
     sorteio: 'Federal — Extração Especial de Natal',
     palpite: 'Elefante (grupo 11) na milhar 7842',
     modalidade: 'Milhar invertida',
-    link_pagamento:
-      'https://premiabicho.exemplo.com.br/aposta/9f2c1b44-8e0a-4d77-b1c2-5e6a7f8d9012/pagar',
   }
 
   function medir(modelo: ModeloMensagem, dados: typeof CONTATO_EXEMPLO) {
@@ -242,13 +348,33 @@ describe('§6.4 — todo modelo cabe em um segmento de SMS', () => {
     }
   })
 
-  it('cabe em UM segmento também com nome longo, valor alto e link de checkout', () => {
+  it('cabe em UM segmento também com nome longo, valor alto e sorteio comprido', () => {
     for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
       const sms = medir(modelo, PESSIMISTA)
       expect(sms.codificacao, `codificação de ${modelo.key}`).toBe('GSM-7')
       expect(
         sms.segmentos,
         `${modelo.key} passou de 160: ${sms.unidades} caracteres`,
+      ).toBe(1)
+    }
+  })
+
+  /*
+   * O outro extremo, e o que passou a acontecer todo dia: NENHUM dado, com
+   * todos os padrões disparando de uma vez.
+   *
+   * O padrão é texto que nós escrevemos, então ele conta para o segmento igual
+   * ao resto — e "confira na sua conta" é mais longo do que "R$ 9,00". Um
+   * padrão generoso demais dobra a conta do canal mais caro do sistema, na
+   * mensagem que vai para quem a plataforma mandou menos campos.
+   */
+  it('cabe em UM segmento também sem dado nenhum, com os padrões no lugar', () => {
+    for (const modelo of MENSAGENS as readonly ModeloMensagem[]) {
+      const sms = medir(modelo, {})
+      expect(sms.codificacao, `codificação de ${modelo.key} sem dados`).toBe('GSM-7')
+      expect(
+        sms.segmentos,
+        `${modelo.key} passou de 160 só com os padrões: ${sms.unidades} caracteres`,
       ).toBe(1)
     }
   })

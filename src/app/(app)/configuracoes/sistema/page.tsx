@@ -4,7 +4,13 @@ import { Badge, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
 import { estadoDoSistema } from '@/db/queries/sistema'
 import { requireAdmin } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
-import { baterAgoraAction, migrarAction, semearAction } from './actions'
+import {
+  aplicarModelosAction,
+  baterAgoraAction,
+  migrarAction,
+  semearAction,
+  simularModelosAction,
+} from './actions'
 import { BotaoDeSistema } from './botoes'
 
 export const metadata: Metadata = { title: 'Sistema · Mandafy' }
@@ -210,6 +216,37 @@ export default async function SistemaPage() {
               acao={semearAction}
               rotulo="Criar o que faltar"
               rotuloOcupado="Criando…"
+            />
+          </CardBody>
+        </Card>
+
+        {/* ── Texto das mensagens-modelo ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Texto das mensagens-modelo</CardTitle>
+          </CardHeader>
+          <CardBody className="flex flex-col gap-3">
+            <p className="text-2xs text-ink-2">
+              O botão acima só cria o que falta — de propósito, senão um deploy apagaria texto que
+              você ajustou. A consequência é que uma mensagem criada há semanas continua com o texto
+              daquele dia, mesmo depois de o modelo melhorar.
+            </p>
+            <p className="text-2xs text-ink-2">
+              Este botão leva a versão atual às mensagens que ainda estão como o sistema as
+              escreveu. <span className="text-ink">O que você editou à mão não é tocado</span> — a
+              simulação diz quais são, antes de gravar qualquer coisa.
+            </p>
+
+            <BotaoDeSistema
+              acao={simularModelosAction}
+              rotulo="Ver o que mudaria"
+              rotuloOcupado="Conferindo…"
+            />
+            <BotaoDeSistema
+              acao={aplicarModelosAction}
+              rotulo="Atualizar para valer"
+              rotuloOcupado="Atualizando…"
+              descricao="Reescreve o texto das mensagens não editadas."
             />
           </CardBody>
         </Card>

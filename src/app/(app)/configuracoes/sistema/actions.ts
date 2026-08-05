@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { withTenant } from '@/db'
 import { runMigrations } from '@/db/migrate'
+import { reaplicarModelos, type Desfecho } from '@/db/reaplicar-modelos'
 import { seedFlows } from '@/db/seed-flows'
 import { semearFunilPadrao, semearRitmos } from '@/db/seed-org'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
@@ -116,6 +117,89 @@ export async function semearAction(): Promise<EstadoAcao> {
     log.error('falha ao semear pelo painel', { reason: mensagem.slice(0, 160) })
     return { erro: mensagem.slice(0, 400) }
   }
+}
+
+/**
+ * Leva o catálogo novo às mensagens que JÁ ESTÃO gravadas.
+ *
+ * POR QUE UM BOTÃO, SE JÁ EXISTE `npm run db:modelos -- --aplicar`
+ *
+ * Porque o comando não existe para quem opera este sistema. O seed só cria o
+ * que falta — é o certo, senão um deploy apagaria texto ajustado à mão —, e a
+ * consequência é que quem semeou uma vez fica preso na versão daquele dia para
+ * sempre. Quando o catálogo foi reescrito para não exigir campo que o webhook
+ * não manda, o código passou a estar certo e o banco continuou com a cadência
+ * de PIX que falha com `variavel_ausente` em todo disparo.
+ *
+ * Uma correção que depende de um terminal é, para quem publica pelo navegador,
+ * uma correção que não aconteceu.
+ *
+ * SIMULA PRIMEIRO, ESCREVE DEPOIS
+ *
+ * O primeiro clique só relata: reescrever o texto que sai para o cliente não
+ * pode acontecer por engano, e o relatório é a parte que ninguém tem antes —
+ * quais mensagens foram editadas à mão e por isso ficam de fora. O segundo
+ * clique, no botão que aparece junto do relatório, grava.
+ */
+export async function reaplicarModelosAction(aplicar: boolean): Promise<EstadoAcao> {
+  const user = await requireAdmin()
+  assertCan(user, 'integracoes.gerenciar')
+
+  try {
+    const resultados = await reaplicarModelos(aplicar)
+
+    const conta = (d: Desfecho) => resultados.filter((r) => r.desfecho === d).length
+    const mudadas = conta('reaplicado')
+    const editadas = conta('editado')
+
+    if (mudadas === 0) {
+      return {
+        ok:
+          editadas > 0
+            ? `Nada a atualizar. ${editadas} mensagem(ns) foram editadas à mão e ficam como estão — para levar o texto novo a elas, abra Mensagens e edite.`
+            : 'Nada a atualizar: as mensagens já estão na versão atual do catálogo.',
+      }
+    }
+
+    const sobre = resultados
+      .filter((r) => r.desfecho === 'reaplicado')
+      .map((r) => r.nome)
+      .join(', ')
+
+    if (!aplicar) {
+      return {
+        ok:
+          `Simulação — nada foi gravado. ${mudadas} mensagem(ns) seriam atualizadas: ${sobre}.` +
+          (editadas > 0 ? ` ${editadas} editada(s) à mão ficam como estão.` : '') +
+          ' Clique em "Atualizar para valer" para gravar.',
+      }
+    }
+
+    revalidatePath('/configuracoes/sistema')
+    revalidatePath('/mensagens')
+
+    return {
+      ok:
+        `${mudadas} mensagem(ns) atualizadas: ${sobre}.` +
+        (editadas > 0 ? ` ${editadas} editada(s) à mão ficaram como estavam.` : ''),
+    }
+  } catch (erro) {
+    const mensagem = erro instanceof Error ? erro.message : 'falha desconhecida'
+    log.error('falha ao reaplicar modelos pelo painel', { reason: mensagem.slice(0, 160) })
+    return { erro: mensagem.slice(0, 400) }
+  }
+}
+
+/**
+ * As duas metades do botão. Server Action não aceita argumento vindo do cliente
+ * sem `bind`, e duas funções nomeadas dizem melhor o que cada clique faz.
+ */
+export async function simularModelosAction(): Promise<EstadoAcao> {
+  return reaplicarModelosAction(false)
+}
+
+export async function aplicarModelosAction(): Promise<EstadoAcao> {
+  return reaplicarModelosAction(true)
 }
 
 /**
