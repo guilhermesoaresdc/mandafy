@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyMapping, MAPEAMENTO_SUGERIDO } from './mapping'
+import { applyMapping, CHAVE_EVENTO_NA_URL, MAPEAMENTO_SUGERIDO } from './mapping'
 
 /**
  * O mapeamento é o que torna o sistema plugável em qualquer plataforma sem
@@ -134,5 +134,62 @@ describe('applyMapping', () => {
     )
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.event.contact.cpf).toBe('12345678900')
+  })
+})
+
+/**
+ * O nome do evento vindo da URL (§4.2).
+ *
+ * Plataformas de banca costumam cadastrar UMA URL POR TIPO de evento — escolhe
+ * "Qrcode Pago", cola um endereço, adiciona. Nesse desenho o corpo não diz o
+ * que aconteceu, porque o endereço já disse, e a ingestão recusava tudo com
+ * `evento_ausente`: a plataforma marcava entrega bem sucedida e nada acontecia.
+ */
+describe('evento declarado na URL', () => {
+  /** O corpo como uma plataforma de URL-por-evento manda: sem dizer o tipo. */
+  const semEvento = (() => {
+    const copia: Record<string, unknown> = { ...payload }
+    delete copia.event
+    return copia
+  })()
+
+  /** O que a rota de entrada grava quando a chamada traz `?evento=`. */
+  const comEventoNaUrl = (corpo: object, evento: string) => ({
+    ...corpo,
+    [CHAVE_EVENTO_NA_URL]: evento,
+  })
+
+  it('traduz o evento quando o corpo não diz qual é', () => {
+    const r = applyMapping(comEventoNaUrl(semEvento, 'qrcode_pago'), MAPEAMENTO_SUGERIDO)
+
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.event.type).toBe('order.paid')
+  })
+
+  it('o corpo continua mandando quando ele diz', () => {
+    // Acrescentar `?evento=` a uma integração que já funciona não pode mudar
+    // o que ela faz — por isso a URL é reserva, e não substituição.
+    const r = applyMapping(comEventoNaUrl(payload, 'bilhete_premiado'), MAPEAMENTO_SUGERIDO)
+
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.event.type).toBe('order.paid')
+  })
+
+  it('os campos continuam sendo extraídos normalmente', () => {
+    const r = applyMapping(comEventoNaUrl(semEvento, 'qrcode_pago'), MAPEAMENTO_SUGERIDO)
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.event.data.valor_cents).toBe(4990)
+    expect(r.event.contact.name).toBe('Maria Silva')
+  })
+
+  it('evento inventado na URL continua sendo recusado', () => {
+    // A URL não é um atalho para furar o mapeamento: quem não tem tradução
+    // continua parando aqui, e a tela de conexão mostra o motivo.
+    const r = applyMapping(comEventoNaUrl(semEvento, 'inventado'), MAPEAMENTO_SUGERIDO)
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.failure.reason).toBe('evento_nao_mapeado')
   })
 })

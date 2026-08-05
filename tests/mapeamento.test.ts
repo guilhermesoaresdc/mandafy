@@ -35,6 +35,21 @@ const DO_SISTEMA = ['link_descadastro', 'contact_id']
 
 const CANONICOS = new Set<string>(CANONICAL_EVENTS)
 
+/**
+ * Os eventos que a tela de conexão oferece como endereço pronto (passo 1).
+ *
+ * Copiados do componente de propósito: se alguém acrescentar um lá sem tradução
+ * aqui, é este teste que avisa — e não a plataforma de quem conectou.
+ */
+const EVENTOS_NO_ENDERECO = [
+  'novo_usuario',
+  'qrcode_criado',
+  'qrcode_pago',
+  'bilhete_premiado',
+  'saque_pendente',
+  'saque_finalizado',
+]
+
 describe('§4.2 — o que a plataforma manda alimenta o que a mensagem escreve', () => {
   const oferecidos = new Set<string>(CAMPOS_CANONICOS.map((c) => c.chave))
 
@@ -87,6 +102,20 @@ describe('§4.2 — o que a plataforma manda alimenta o que a mensagem escreve',
     // acontecer nunca.
     for (const alvo of Object.values(parsed.data.event_map)) {
       expect(CANONICOS.has(alvo), `${alvo} não é evento canônico`).toBe(true)
+    }
+  })
+
+  /*
+   * Os endereços por evento do passo 1 e a tradução do passo 3 são duas listas
+   * em arquivos diferentes. Um endereço com `?evento=` que o mapa não conhece
+   * é recusado com `evento_nao_mapeado`: a plataforma marca entrega bem
+   * sucedida, a tela diz "conectada", e nada acontece nunca.
+   */
+  it('todo evento oferecido no endereço tem tradução no mapeamento', () => {
+    const traduzidos = new Set(Object.keys(mappingSchema.parse(MAPEAMENTO_SUGERIDO).event_map))
+
+    for (const evento of EVENTOS_NO_ENDERECO) {
+      expect(traduzidos.has(evento), `${evento} não tem tradução no mapeamento sugerido`).toBe(true)
     }
   })
 

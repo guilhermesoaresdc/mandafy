@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { NextResponse, type NextRequest } from 'next/server'
 import { db } from '@/db'
+import { CHAVE_EVENTO_NA_URL } from '@/lib/ingest/mapping'
 import { dedupeHash, verifySignature } from '@/lib/ingest/signature'
 import { createLogger } from '@/lib/logger'
 import { getQueue, QUEUE_NAMES } from '@/lib/queue'
@@ -24,6 +25,24 @@ const log = createLogger('ingest')
 /** Corpo maior que isso é recusado antes de qualquer processamento. */
 const TAMANHO_MAXIMO = 512 * 1024
 
+/**
+ * Só objeto JSON recebe a chave do evento.
+ *
+ * Espalhar um array (`{...[1,2]}`) produziria um objeto de chaves numéricas e
+ * destruiria o corpo original. Corpo que não é objeto simplesmente não ganha a
+ * chave — e aí o `?evento=` não vale, o que é o desfecho honesto.
+ */
+function ehObjetoSimples(valor: unknown): valor is Record<string, unknown> {
+  return typeof valor === 'object' && valor !== null && !Array.isArray(valor)
+}
+
+/** Aceita o que cabe num nome de evento de plataforma, e nada além. */
+function normalizarEvento(bruto: string | null): string | null {
+  if (!bruto) return null
+  const limpo = bruto.trim().slice(0, 80)
+  return /^[\w.\- ]+$/.test(limpo) ? limpo : null
+}
+
 export async function POST(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const inicio = Date.now()
   const { token } = await context.params
@@ -43,6 +62,30 @@ export async function POST(request: NextRequest, context: { params: Promise<{ to
     payload = JSON.parse(rawBody)
   } catch {
     return NextResponse.json({ ok: false, error: 'json_invalido' }, { status: 400 })
+  }
+
+  /*
+   * O NOME DO EVENTO PODE VIR NA URL: `/in/{token}?evento=qrcode_pago`.
+   *
+   * Nem toda plataforma põe o tipo do evento dentro do corpo. Há um desenho
+   * comum — o Techloto é assim — em que se cadastra UMA URL POR TIPO: um campo
+   * "tipo de evento", um campo de endereço, e uma lista de webhooks
+   * cadastrados. Nesse desenho o corpo não precisa dizer o que aconteceu,
+   * porque o endereço já disse.
+   *
+   * Sem isto, o mapeamento procurava o nome do evento em `$.event`, não achava,
+   * e a ingestão recusava tudo com `evento_ausente` — a plataforma marcaria a
+   * entrega como falha e a pessoa veria "aguardando" para sempre, com o webhook
+   * ligado do outro lado.
+   *
+   * O valor entra no payload gravado sob uma chave reservada, e não substitui o
+   * corpo: o que a plataforma mandou continua intacto para o replay e para a
+   * tela de mapeamento. Quem manda o evento no corpo continua tendo prioridade —
+   * acrescentar `?evento=` nunca muda uma integração que já funcionava.
+   */
+  const evento = normalizarEvento(request.nextUrl.searchParams.get('evento'))
+  if (evento && ehObjetoSimples(payload)) {
+    payload = { ...payload, [CHAVE_EVENTO_NA_URL]: evento }
   }
 
   try {
@@ -87,7 +130,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ to
       return NextResponse.json({ ok: false, error: 'assinatura_invalida' }, { status: 401 })
     }
 
-    const hash = dedupeHash(source.id, rawBody)
+    /*
+     * O evento entra no hash de deduplicação.
+     *
+     * Numa plataforma de uma URL por evento, dois avisos diferentes sobre o
+     * MESMO pedido podem ter corpos idênticos — só a URL os distingue. Com o
+     * hash calculado apenas sobre o corpo, o segundo seria descartado como
+     * repetição, e o fluxo dele nunca dispararia.
+     */
+    const hash = dedupeHash(source.id, evento ? `${evento}\n${rawBody}` : rawBody)
 
     /*
      * Deduplicação e gravação numa chamada só (drizzle/0016).

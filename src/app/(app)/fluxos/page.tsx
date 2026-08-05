@@ -16,9 +16,17 @@ export default async function FluxosPage() {
   const lista = await withTenant(tenantOf(user), listarFluxos)
 
   return (
+    /*
+     * A descrição diz de onde vêm os eventos.
+     *
+     * Quem procura "como gero o webhook" vem para cá primeiro — o fluxo é o que
+     * reage ao evento, então parece o lugar. Não é: o endereço nasce na
+     * plataforma conectada, uma tela adiante. Uma frase aqui economiza a
+     * procura.
+     */
     <SessionFrame
       title="Fluxos"
-      description="O que dispara, quando sai, e o que faz parar."
+      description="O que dispara, quando sai, e o que faz parar. Os eventos chegam da sua plataforma — o endereço de webhook fica em Configurações → Plataformas."
     >
       {lista.length === 0 ? (
         /*

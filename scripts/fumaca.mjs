@@ -232,9 +232,40 @@ try {
       const corpo = await r.text()
       checar('ingestão aceita o token da plataforma', r.status === 200, `status ${r.status} ${corpo.slice(0, 120)}`)
 
+      /*
+       * O evento declarado na URL (`?evento=`).
+       *
+       * Plataformas de banca cadastram UMA URL POR TIPO de evento, e nesse
+       * desenho o corpo não diz o que aconteceu. Aqui o corpo é propositalmente
+       * mudo: se a rota recusar, é porque o caminho da URL parou de funcionar,
+       * e o sintoma em produção seria a plataforma marcando entrega bem
+       * sucedida com nada acontecendo deste lado.
+       */
+      const porEvento = await fetch(`${BASE}/in/${tokenIngestao}?evento=qrcode_pago`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pedido: randomBytes(8).toString('hex') }),
+      })
+      checar(
+        'ingestão aceita o evento declarado na URL',
+        porEvento.status === 200,
+        `status ${porEvento.status}`,
+      )
+
+      const [cru] = await db`
+        SELECT payload FROM events_raw
+        WHERE source_id = ${fonte.id}
+        ORDER BY received_at DESC LIMIT 1`
+      checar(
+        'e o evento da URL fica gravado junto do corpo original',
+        cru?.payload?._mandafy_evento === 'qrcode_pago' && Boolean(cru?.payload?.pedido),
+      )
+
+      // Dois: o do corpo com evento e o da URL. Cada chamada legítima grava
+      // uma linha — é o que garante o replay e a tela de mapeamento.
       const [gravado] = await db`
         SELECT count(*)::int AS n FROM events_raw WHERE source_id = ${fonte.id}`
-      checar('e o payload cru foi gravado', gravado.n === 1, `${gravado.n} linha(s)`)
+      checar('e cada payload cru foi gravado', gravado.n === 2, `${gravado.n} linha(s)`)
 
       const recusado = await fetch(`${BASE}/in/tokeninexistente1234567`, {
         method: 'POST',
