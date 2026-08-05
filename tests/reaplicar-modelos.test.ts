@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import * as schema from '@/db/schema'
-import { reaplicarModelos } from '@/db/reaplicar-modelos'
+import { reaplicarModelos, reaplicarNaConexao } from '@/db/reaplicar-modelos'
 import { linhasDoModelo, acharModelo } from '@/lib/messages/aplicar-modelo'
 import { MENSAGENS } from '@/lib/messages/modelos'
 
@@ -151,7 +151,14 @@ describe.skipIf(!habilitado)('§5.2 — reaplicar o catálogo', () => {
     // texto fala de aposta — pior que não atualizar nada.
     expect(email?.subject).toBe(modelo.variantes?.email?.subject)
     expect(sms?.stripAccents).toBe(true)
-    expect(telegram?.buttons?.[0]?.text).toBe(modelo.variantes?.telegram?.buttons?.[0]?.text)
+    /*
+     * O botão do Telegram, quando o modelo tem um — e `null` quando não tem.
+     * Comparar as duas pontas com `?.` deixava o caso passar por vacuidade no
+     * dia em que o botão saiu do modelo: `undefined === undefined`.
+     */
+    expect(telegram?.buttons ?? null).toEqual(
+      modelo.variantes?.telegram?.buttons ? [...modelo.variantes.telegram.buttons] : null,
+    )
     // Variante escrita à mão nasce dessincronizada: editar o corpo depois não
     // pode apagar um texto feito de propósito para aquele canal.
     expect(email?.synced).toBe(false)
@@ -276,5 +283,143 @@ Finaliza aqui: {{link_pagamento}}`
     await semear(CORPO_ANTIGO)
 
     await expect(reaplicarModelos(true, APP_URL)).rejects.toThrow(/papel da aplicação/)
+  })
+})
+
+/**
+ * O MESMO trabalho pelo botão do painel — e é outro caminho de verdade.
+ *
+ * O comando abre conexão de dono e recusa o papel da aplicação, o que está
+ * certo para ele. O botão não pode fazer nem uma coisa nem outra: na hospedagem
+ * de quem opera pelo navegador existe uma variável de banco só, apontando para
+ * `mandafy_app`. A primeira versão do botão chamava o comando e respondia com a
+ * explicação de por que não ia fazer nada — o consertar-pelo-painel que era o
+ * motivo inteiro de ele existir.
+ *
+ * Aqui ele roda como `mandafy_app`, com RLS aplicado e `app.org_id` definido,
+ * que é exatamente a situação de produção. E é a situação em que este projeto
+ * já viu, quatro vezes, uma escrita atualizar ZERO linhas sem erro nenhum.
+ */
+const APP_URL = process.env.TEST_DATABASE_URL
+const doisPapeis = Boolean(ADMIN_URL && APP_URL)
+
+describe.skipIf(!doisPapeis)('§5.2 — reaplicar pelo painel, com o papel da aplicação', () => {
+  let admin: postgres.Sql
+  let app: postgres.Sql
+  let comoApp: PostgresJsDatabase<typeof schema>
+
+  const ORG_A = uid('f11')
+  const ORG_B = uid('f12')
+  const USUARIO = uid('f13')
+
+  const atual = linhasDoModelo(acharModelo(MENSAGENS, CHAVE)!).mensagem
+
+  /** Mesma mecânica de withTenant(), sem depender das variáveis de ambiente. */
+  async function naOrg<T>(orgId: string, fn: (tx: PostgresJsDatabase<typeof schema>) => Promise<T>) {
+    return comoApp.transaction(async (tx) => {
+      await tx.execute(sql`
+        select
+          set_config('app.org_id',   ${orgId}, true),
+          set_config('app.user_id',  ${USUARIO}, true),
+          set_config('app.is_admin', 'true', true)
+      `)
+      return fn(tx as unknown as PostgresJsDatabase<typeof schema>)
+    })
+  }
+
+  beforeAll(async () => {
+    admin = postgres(ADMIN_URL!, { max: 1, onnotice: () => {} })
+    app = postgres(APP_URL!, { max: 2, onnotice: () => {} })
+    comoApp = drizzle(app, { schema })
+
+    for (const org of [ORG_A, ORG_B]) {
+      await admin`DELETE FROM organizations WHERE id = ${org}`
+    }
+    await admin`INSERT INTO organizations (id, name, slug) VALUES
+      (${ORG_A}, 'Org A', 'reaplicar-painel-a'),
+      (${ORG_B}, 'Org B', 'reaplicar-painel-b')`
+    await admin`INSERT INTO users (id, org_id, name, email, password_hash, role) VALUES
+      (${USUARIO}, ${ORG_A}, 'Admin', 'reaplicar-painel@teste.local', 'x', 'admin')`
+  })
+
+  afterAll(async () => {
+    if (!doisPapeis) return
+    for (const org of [ORG_A, ORG_B]) {
+      await admin`DELETE FROM organizations WHERE id = ${org}`
+    }
+    await admin.end({ timeout: 5 })
+    await app.end({ timeout: 5 })
+  })
+
+  beforeEach(async () => {
+    await admin`DELETE FROM messages WHERE org_id IN (${ORG_A}, ${ORG_B})`
+
+    for (const org of [ORG_A, ORG_B]) {
+      const [linha] = await admin<{ id: string }[]>`
+        INSERT INTO messages (org_id, key, name, body)
+        VALUES (${org}, ${CHAVE}, 'Nome antigo', ${CORPO_ANTIGO})
+        RETURNING id`
+      await admin`
+        INSERT INTO message_variants (message_id, channel)
+        SELECT ${linha!.id}::uuid, unnest(ARRAY['whatsapp','email','sms','telegram'])`
+    }
+  })
+
+  async function corpoNa(org: string): Promise<string> {
+    const [linha] = await admin<{ body: string }[]>`
+      SELECT body FROM messages WHERE org_id = ${org} AND key = ${CHAVE}`
+    return linha!.body
+  }
+
+  it('enxerga a mensagem e a atualiza — o RLS não engole a escrita', async () => {
+    const r = await naOrg(ORG_A, (tx) => reaplicarNaConexao(tx, true, ORG_A))
+
+    // Zero linha aqui seria o modo de falha desta base de código: sem erro, sem
+    // aviso, e "nada a atualizar" na tela.
+    expect(r.some((x) => x.key === CHAVE && x.desfecho === 'reaplicado')).toBe(true)
+    expect(await corpoNa(ORG_A)).toBe(atual.body)
+  })
+
+  it('não toca na mensagem de OUTRA organização', async () => {
+    await naOrg(ORG_A, (tx) => reaplicarNaConexao(tx, true, ORG_A))
+
+    expect(await corpoNa(ORG_B)).toBe(CORPO_ANTIGO)
+  })
+
+  it('a simulação continua não escrevendo nada', async () => {
+    const r = await naOrg(ORG_A, (tx) => reaplicarNaConexao(tx, false, ORG_A))
+
+    expect(r.some((x) => x.key === CHAVE && x.desfecho === 'reaplicado')).toBe(true)
+    expect(await corpoNa(ORG_A)).toBe(CORPO_ANTIGO)
+  })
+
+  it('texto editado à mão continua intocado também por aqui', async () => {
+    const editado = `${CORPO_ANTIGO}\n\nParágrafo que a pessoa acrescentou.`
+    await admin`UPDATE messages SET body = ${editado} WHERE org_id = ${ORG_A} AND key = ${CHAVE}`
+
+    const r = await naOrg(ORG_A, (tx) => reaplicarNaConexao(tx, true, ORG_A))
+
+    expect(r.some((x) => x.key === CHAVE && x.desfecho === 'editado')).toBe(true)
+    expect(await corpoNa(ORG_A)).toBe(editado)
+  })
+
+  it('as variantes acompanham, e elas herdam o RLS da mensagem', async () => {
+    await naOrg(ORG_A, (tx) => reaplicarNaConexao(tx, true, ORG_A))
+
+    /*
+     * `message_variants` não tem `org_id`: a política dela é "a mensagem
+     * precisa estar visível". Uma escrita que passa na tabela pai e falha na
+     * filha deixaria o corpo novo com o assunto velho — e é o tipo de coisa que
+     * só aparece na caixa de entrada de alguém.
+     */
+    const [email] = await admin<{ subject: string | null; synced: boolean }[]>`
+      SELECT v.subject, v.synced
+      FROM message_variants v
+      JOIN messages m ON m.id = v.message_id
+      WHERE m.org_id = ${ORG_A} AND m.key = ${CHAVE} AND v.channel = 'email'`
+
+    const modelo = acharModelo(MENSAGENS, CHAVE)!
+    expect(email?.subject).toBe(modelo.variantes?.email?.subject)
+    expect(email?.synced).toBe(false)
   })
 })

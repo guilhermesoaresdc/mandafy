@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { withTenant } from '@/db'
 import { runMigrations } from '@/db/migrate'
-import { reaplicarModelos, type Desfecho } from '@/db/reaplicar-modelos'
+import { reaplicarNaConexao, type Desfecho } from '@/db/reaplicar-modelos'
 import { seedFlows } from '@/db/seed-flows'
 import { semearFunilPadrao, semearRitmos } from '@/db/seed-org'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
@@ -140,13 +140,28 @@ export async function semearAction(): Promise<EstadoAcao> {
  * pode acontecer por engano, e o relatório é a parte que ninguém tem antes —
  * quais mensagens foram editadas à mão e por isso ficam de fora. O segundo
  * clique, no botão que aparece junto do relatório, grava.
+ *
+ * COM A CONEXÃO DA SESSÃO, NÃO COM UMA DE DONO
+ *
+ * A primeira versão chamava `reaplicarModelos()`, que abre conexão própria com
+ * `DATABASE_URL_ADMIN` e RECUSA rodar com o papel da aplicação. Na hospedagem
+ * de quem opera pelo navegador existe uma variável de banco só, apontando para
+ * `mandafy_app` — então o botão respondia com a explicação de por que não ia
+ * fazer nada, e a única saída era mexer em variável de ambiente e publicar de
+ * novo. Consertar pelo painel era justamente o motivo de o botão existir.
+ *
+ * Aqui ele roda dentro de `withTenant`, na organização de quem clicou, como
+ * "Criar o que faltar" já faz. O comando continua existindo para a instalação
+ * inteira, onde há papel de dono e não há sessão de onde tirar organização.
  */
 export async function reaplicarModelosAction(aplicar: boolean): Promise<EstadoAcao> {
   const user = await requireAdmin()
   assertCan(user, 'integracoes.gerenciar')
 
   try {
-    const resultados = await reaplicarModelos(aplicar)
+    const resultados = await withTenant(tenantOf(user), (tx) =>
+      reaplicarNaConexao(tx, aplicar, user.orgId),
+    )
 
     const conta = (d: Desfecho) => resultados.filter((r) => r.desfecho === d).length
     const mudadas = conta('reaplicado')
