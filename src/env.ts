@@ -57,12 +57,25 @@ const serverSchema = z.object({
   EVOLUTION_GLOBAL_APIKEY: z.string().optional(),
 
   // E-mail — §8.3
-  EMAIL_PROVIDER: z.enum(['resend', 'ses', 'brevo']).default('resend'),
+  /*
+   * Só os provedores que TÊM adaptador (§8).
+   *
+   * A spec lista `ses` e `zenvia` como opções previstas, e o enum os aceitava
+   * — mas `resolverAlvo` cai no padrão para tudo que não conhece. O efeito é a
+   * pior forma de falha deste sistema: quem troca de provedor porque o atual o
+   * bloqueou continua enviando pelo bloqueado, agora com a chave do outro, e
+   * colhe `credencial_recusada` em cada mensagem enquanto a tela diz que está
+   * usando o provedor novo.
+   *
+   * Recusar no boot é o oposto disso: a mensagem de erro nomeia o que existe.
+   * Quando o adaptador de SES ou Zenvia for escrito, o valor volta para cá.
+   */
+  EMAIL_PROVIDER: z.enum(['resend', 'brevo']).default('resend'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
 
   // SMS — §8.4
-  SMS_PROVIDER: z.enum(['smsdev', 'comtele', 'zenvia']).default('smsdev'),
+  SMS_PROVIDER: z.enum(['smsdev', 'comtele']).default('smsdev'),
   SMS_API_KEY: z.string().optional(),
   SMS_SENDER: z.string().optional(),
 

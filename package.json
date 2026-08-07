@@ -22,6 +22,7 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "node --env-file-if-exists=.env --import tsx src/db/seed-cli.ts",
     "db:modelos": "node --env-file-if-exists=.env --import tsx src/db/reaplicar-modelos-cli.ts",
+    "crm:leads-do-webhook": "node --env-file-if-exists=.env --import tsx src/db/leads-do-webhook-cli.ts",
     "fumaca": "node scripts/fumaca.mjs",
     "db:embutir": "node scripts/embutir-migrations.mjs",
     "prebuild": "node scripts/embutir-migrations.mjs",

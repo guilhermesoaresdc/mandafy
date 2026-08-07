@@ -73,6 +73,7 @@ docker/          Dockerfile, Caddyfile, init de banco
 | `npm run db:migrate` | Aplica as migrations pendentes |
 | `npm run db:seed` | Popula org, admin, mensagens e fluxos-modelo |
 | `npm run db:modelos` | Simula a reaplicação do catálogo por cima do que já existe; `-- --aplicar` grava |
+| `npm run crm:leads-do-webhook` | Simula a abertura de leads para contatos que vieram da plataforma e não têm cartão; `-- --aplicar` grava |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Vitest |
 | `npm run fumaca` | Sobe o app compilado e abre cada tela autenticada |

@@ -158,6 +158,163 @@ export async function criarLeadDoEvento(
   return resultados
 }
 
+export type ResultadoBackfill = {
+  /** Quantos contatos do webhook estavam sem lead nenhum. */
+  vistos: number
+  criados: number
+  /** Pediram para sair — não viram lead. */
+  pulados: number
+  /** Não há funil padrão onde pôr os cartões. */
+  semFunil?: boolean
+}
+
+/**
+ * Traz para o funil o que o webhook já tinha trazido para a base.
+ *
+ * A criação automática por evento só vale para quem chega DEPOIS dela existir.
+ * Todo cadastro que a plataforma mandou antes disso está no banco como contato
+ * e nunca chegou ao time comercial — e é justamente a base acumulada, que é a
+ * maior parte.
+ *
+ * Roda por comando (`npm run crm:leads-do-webhook`), não na manutenção. É uma
+ * recuperação de histórico, não uma tarefa recorrente: depois que passa, o
+ * caminho normal dá conta, e uma varredura periódica sobre "contato sem lead"
+ * acabaria transformando em lead toda base importada por planilha — que é
+ * exatamente o que `importar.ts` deixa opcional de propósito.
+ *
+ * IDEMPOTENTE: só olha contato SEM NENHUM lead. Rodar duas vezes não duplica
+ * cartão, e quem já foi trabalhado e teve o lead fechado não volta ao funil.
+ */
+export async function criarLeadsDosContatosDoWebhook(
+  tx: Tx,
+  orgId: string,
+  opcoes: { aplicar?: boolean; limite?: number } = {},
+  agora = new Date(),
+): Promise<ResultadoBackfill> {
+  /*
+   * Simulação por padrão, como `db:modelos`.
+   *
+   * O comando pode abrir mil cartões e distribuí-los entre os consultores.
+   * Isso não se desfaz com um clique, e a contagem é a parte útil na maioria
+   * das vezes: dizer quantos entrariam é o que ninguém sabe antes de rodar.
+   */
+  const aplicar = opcoes.aplicar ?? false
+  const limite = opcoes.limite ?? 1000
+
+  const [pipeline] = await tx
+    .select({ id: pipelines.id })
+    .from(pipelines)
+    .where(eq(pipelines.isDefault, true))
+    .limit(1)
+
+  if (!pipeline) return { vistos: 0, criados: 0, pulados: 0, semFunil: true }
+
+  const etapas = await tx
+    .select({ id: pipelineStages.id, name: pipelineStages.name })
+    .from(pipelineStages)
+    .where(eq(pipelineStages.pipelineId, pipeline.id))
+    .orderBy(pipelineStages.position)
+
+  // Mesma etapa da regra `contato_novo`, para que os cartões do backfill e os
+  // do caminho normal nasçam no mesmo lugar.
+  const etapa = etapas.find((e) => e.name === 'Novo') ?? etapas[0]
+  if (!etapa) return { vistos: 0, criados: 0, pulados: 0, semFunil: true }
+
+  /*
+   * `last_event_at IS NOT NULL` é o que separa quem veio da plataforma de quem
+   * veio de planilha: só a ingestão preenche essa coluna. Importar carteira e
+   * criar cartão é decisão de quem importa (ver `importarContatos`), e este
+   * comando não pode tomá-la por ninguém.
+   */
+  const candidatos = await tx
+    .select({
+      id: contacts.id,
+      name: contacts.name,
+      totalPaidCents: contacts.totalPaidCents,
+      optedOutAt: contacts.optedOutAt,
+    })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.orgId, orgId),
+        sql`${contacts.lastEventAt} IS NOT NULL`,
+        sql`NOT EXISTS (SELECT 1 FROM ${leads} l WHERE l.contact_id = ${contacts.id})`,
+      ),
+    )
+    .orderBy(contacts.lastEventAt)
+    .limit(limite)
+
+  if (candidatos.length === 0) return { vistos: 0, criados: 0, pulados: 0 }
+
+  const consultores = await consultoresAtivos(tx, orgId)
+  const carga = await cargaPorConsultor(tx)
+
+  let criados = 0
+  let pulados = 0
+
+  for (const candidato of candidatos) {
+    /*
+     * Quem pediu para sair não vira cartão.
+     *
+     * Um lead não é uma mensagem, mas é uma tarefa para um consultor ligar —
+     * que é exatamente o que a pessoa recusou. A guarda de §5.3 protege o
+     * disparo automático; aqui, o mesmo respeito, no caminho humano.
+     */
+    if (candidato.optedOutAt) {
+      pulados += 1
+      continue
+    }
+
+    const dono = proximoResponsavel(consultores, carga)
+
+    if (!aplicar) {
+      if (dono) carga.set(dono.id, (carga.get(dono.id) ?? 0) + 1)
+      criados += 1
+      continue
+    }
+
+    const [criado] = await tx
+      .insert(leads)
+      .values({
+        orgId,
+        contactId: candidato.id,
+        ownerId: dono?.id ?? null,
+        pipelineId: pipeline.id,
+        stageId: etapa.id,
+        title: candidato.name ?? 'Lead sem nome',
+        valueCents: candidato.totalPaidCents,
+        // A mesma origem da regra automática: para o funil, os dois são a
+        // mesma coisa — alguém que chegou pela plataforma.
+        source: 'evento:contato_novo',
+        stageChangedAt: agora,
+      })
+      .returning({ id: leads.id })
+
+    if (!criado) continue
+
+    await tx.insert(leadActivities).values({
+      leadId: criado.id,
+      type: 'mudanca_etapa',
+      content:
+        'Criado a partir do histórico: já estava na base pela plataforma e ainda não tinha cartão no funil.',
+    })
+
+    // A carga sobe a cada atribuição: sem isso, os mil cartões do backfill
+    // cairiam todos no mesmo consultor.
+    if (dono) carga.set(dono.id, (carga.get(dono.id) ?? 0) + 1)
+    criados += 1
+  }
+
+  log.info('backfill de leads do webhook', {
+    vistos: candidatos.length,
+    criados,
+    pulados,
+    aplicar,
+  })
+
+  return { vistos: candidatos.length, criados, pulados }
+}
+
 /**
  * Materializa as regras com atraso (§9.3, "sem pagamento em 24h").
  *
