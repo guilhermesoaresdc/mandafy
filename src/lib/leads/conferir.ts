@@ -43,7 +43,7 @@ export type LinhaRejeitada = {
 export type Conferencia = {
   validas: LinhaValidada[]
   rejeitadas: LinhaRejeitada[]
-  /** Linhas descartadas por repetirem outra do MESMO arquivo. */
+  /** Linhas que repetiam outra do MESMO arquivo e foram fundidas nela. */
   repetidas: number
 }
 
@@ -117,7 +117,8 @@ export function conferir(linhas: LinhaCsv[], mapa: MapaColunas): Conferencia {
 
   const validas: LinhaValidada[] = []
   const rejeitadas: LinhaRejeitada[] = []
-  const vistos = new Set<string>()
+  /** Chave → a linha já aceita que a detém. Uma linha pode ter três chaves. */
+  const vistos = new Map<string, LinhaValidada>()
   let repetidas = 0
 
   const pegar = (linha: LinhaCsv, campo: CampoDestino): string => {
@@ -147,36 +148,97 @@ export function conferir(linhas: LinhaCsv[], mapa: MapaColunas): Conferencia {
       return
     }
 
+    const tagsBrutas = pegar(linha, 'tags')
+
     /*
-     * Repetido DENTRO do arquivo. Sem isto, duas linhas do mesmo telefone
-     * viram dois upserts e o relatório diz "2 criados" para uma pessoa só.
+     * Repetido DENTRO do arquivo — por QUALQUER das três chaves.
+     *
+     * Aqui morava um 23505 em produção. A versão anterior escolhia uma chave só
+     * (`externalId ?? telefone ?? email`), mas o banco tem TRÊS índices únicos.
+     * Duas linhas da mesma pessoa — uma identificada pelo telefone, outra pelo
+     * e-mail — não pareciam repetidas por chave nenhuma, passavam as duas, e o
+     * INSERT esbarrava no índice do e-mail. Nada era importado, porque a
+     * gravação é uma transação.
+     *
+     * Uma chave nunca ia dar conta: o que faz duas linhas serem a mesma pessoa
+     * é coincidir em qualquer identificador, não no que escolhemos olhar.
      */
-    const chave = externalId ?? telefone ?? email ?? ''
-    if (vistos.has(chave)) {
+    const chaves = [
+      externalId ? `ext:${externalId}` : null,
+      telefone ? `tel:${telefone}` : null,
+      email ? `mail:${email}` : null,
+    ].filter((c): c is string => c !== null)
+
+    const anterior = chaves.map((c) => vistos.get(c)).find((v) => v !== undefined)
+
+    if (anterior) {
+      /*
+       * Fundir, não descartar. A segunda linha existe quase sempre porque traz
+       * o que falta na primeira — foi por isso que a planilha ficou com duas.
+       * Jogá-la fora perderia o e-mail que só ela tinha.
+       */
+      fundir(anterior, {
+        nome: pegar(linha, 'nome').trim() || null,
+        telefone,
+        email,
+        cpf: limparCpf(pegar(linha, 'cpf')),
+        externalId,
+        tags: separarTags(tagsBrutas),
+        valorCents: lerValor(pegar(linha, 'valor_cents'), jaEmCentavos),
+        titulo: pegar(linha, 'titulo').trim() || null,
+      })
+
+      // As chaves que a repetida trouxe passam a apontar para a mesma linha.
+      for (const c of chaves) vistos.set(c, anterior)
       repetidas += 1
       return
     }
-    vistos.add(chave)
 
-    const tagsBrutas = pegar(linha, 'tags')
-
-    validas.push({
+    const aceita: LinhaValidada = {
       linha: numero,
       nome: pegar(linha, 'nome').trim() || null,
       telefone,
       email,
       cpf: limparCpf(pegar(linha, 'cpf')),
       externalId,
-      tags: tagsBrutas
-        .split(/[;,|]/)
-        .map((t) => t.trim())
-        .filter((t) => t !== ''),
+      tags: separarTags(tagsBrutas),
       valorCents: lerValor(pegar(linha, 'valor_cents'), jaEmCentavos),
       titulo: pegar(linha, 'titulo').trim() || null,
-    })
+    }
+
+    validas.push(aceita)
+    for (const c of chaves) vistos.set(c, aceita)
   })
 
   return { validas, rejeitadas, repetidas }
 }
 
+function separarTags(bruto: string): string[] {
+  return bruto
+    .split(/[;,|]/)
+    .map((t) => t.trim())
+    .filter((t) => t !== '')
+}
 
+/**
+ * Traz para `alvo` o que só a linha repetida tinha.
+ *
+ * Preenche vazio, nunca sobrescreve: a primeira linha é a que a pessoa vê na
+ * prévia, e vê-la mudar de nome porque uma linha lá embaixo grafou diferente
+ * seria inexplicável. Etiquetas se somam — são acréscimo por natureza — e o
+ * valor entra só se ainda for zero.
+ */
+function fundir(alvo: LinhaValidada, extra: Omit<LinhaValidada, 'linha'>): void {
+  alvo.nome ??= extra.nome
+  alvo.telefone ??= extra.telefone
+  alvo.email ??= extra.email
+  alvo.cpf ??= extra.cpf
+  alvo.externalId ??= extra.externalId
+  alvo.titulo ??= extra.titulo
+
+  if (alvo.valorCents === 0) alvo.valorCents = extra.valorCents
+
+  for (const tag of extra.tags) {
+    if (!alvo.tags.includes(tag)) alvo.tags.push(tag)
+  }
+}

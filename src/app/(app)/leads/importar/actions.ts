@@ -136,7 +136,7 @@ function codigoDoErro(erro: unknown): string {
  */
 function explicar(codigo: string): string {
   const CONHECIDOS: Record<string, string> = {
-    '23505': 'Duas linhas da planilha apontam para o mesmo contato já cadastrado. Confira se o telefone ou o e-mail se repete.',
+    '23505': 'Um telefone ou e-mail da planilha já pertence a outro contato desta organização. Nada foi importado. Me mande este código e a planilha para eu ver qual é.',
     '23503': 'O funil de destino não existe mais. Recarregue a página e tente de novo.',
     '23514': 'Algum valor da planilha não é aceito nessa coluna. Confira o mapeamento das colunas acima.',
     '42501': 'Sua conta não tem permissão para gravar contatos nesta organização.',

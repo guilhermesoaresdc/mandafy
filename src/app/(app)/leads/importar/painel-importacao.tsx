@@ -114,6 +114,15 @@ export function PainelImportacao() {
             <Numero rotulo="Preservados" valor={r.preservados} destaque={r.preservados > 0} />
           </dl>
 
+          {r.semFunil ? (
+            <p className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-2xs leading-relaxed text-ink-2">
+              Os contatos entraram, mas nenhum lead foi aberto:{' '}
+              <span className="text-ink">esta organização não tem funil padrão</span>, e sem etapa
+              não há onde pôr o cartão. A base já serve para disparo. Crie o funil em Pipeline e
+              importe de novo para abrir os leads — os contatos não vão duplicar.
+            </p>
+          ) : null}
+
           {r.preservados > 0 ? (
             /*
              * Isto não é aviso de erro — é a prestação de contas da decisão

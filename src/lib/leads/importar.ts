@@ -36,6 +36,13 @@ export type ResultadoImportacao = {
   /** Já existiam e tinham pedido para sair — não foram reativados. */
   preservados: number
   leadsCriados: number
+  /**
+   * Pediu-se lead e não havia funil padrão onde pôr o cartão.
+   *
+   * Sem isto o resultado diria "0 leads criados" e nada mais — e um zero sem
+   * motivo manda a pessoa procurar defeito na planilha, que está certa.
+   */
+  semFunil?: boolean
 }
 
 /** Quanto entra por INSERT. Um `VALUES` gigante estoura o limite de parâmetros. */
@@ -72,6 +79,7 @@ export async function importarContatos(
 
   const agora = new Date()
   const existentes = await buscarExistentes(tx, orgId, validas)
+  const donos = mapearDonos(existentes)
 
   let atualizados = 0
   let preservados = 0
@@ -101,7 +109,7 @@ export async function importarContatos(
     if (existente.optedOutAt) preservados += 1
     else atualizados += 1
 
-    const mudanca = montarAtualizacao(existente, item)
+    const mudanca = montarAtualizacao(existente, item, donos)
     // Só vai ao banco quem tem o que mudar. Reimportar a mesma planilha, que é
     // o caso mais comum, não gera UPDATE nenhum.
     if (mudanca) {
@@ -142,11 +150,18 @@ export async function importarContatos(
     })
   }
 
-  const leadsCriados = opcoes.criarLeads
-    ? await abrirLeads(tx, orgId, validas, contatoDaLinha, opcoes, agora)
+  const etapa = opcoes.criarLeads ? await primeiraEtapa(tx, orgId) : null
+  const leadsCriados = etapa
+    ? await abrirLeads(tx, orgId, validas, contatoDaLinha, etapa, opcoes, agora)
     : 0
 
-  const resultado = { criados: paraInserir.length, atualizados, preservados, leadsCriados }
+  const resultado = {
+    criados: paraInserir.length,
+    atualizados,
+    preservados,
+    leadsCriados,
+    ...(opcoes.criarLeads && !etapa ? { semFunil: true } : {}),
+  }
   log.info('importação concluída', resultado)
   return resultado
 }
@@ -185,6 +200,27 @@ async function buscarExistentes(
     .where(and(eq(contacts.orgId, orgId), or(...chaves)))
 }
 
+/** Quem já detém cada valor único, para não tentar dá-lo a outro contato. */
+type Donos = {
+  telefone: Map<string, string>
+  email: Map<string, string>
+  externo: Map<string, string>
+}
+
+function mapearDonos(existentes: ContatoExistente[]): Donos {
+  const donos: Donos = { telefone: new Map(), email: new Map(), externo: new Map() }
+
+  for (const c of existentes) {
+    if (c.phoneE164) donos.telefone.set(c.phoneE164, c.id)
+    // O e-mail é `citext` no banco: a comparação lá ignora a caixa, e aqui
+    // precisa ignorar também, senão "Maria@" e "maria@" parecem livres.
+    if (c.email) donos.email.set(c.email.toLowerCase(), c.id)
+    if (c.externalId) donos.externo.set(c.externalId, c.id)
+  }
+
+  return donos
+}
+
 /**
  * Qual contato é este, na ordem de confiança da chave.
  *
@@ -202,7 +238,14 @@ function achar(existentes: ContatoExistente[], item: LinhaValidada): ContatoExis
     if (achado) return achado
   }
   if (item.email) {
-    const achado = existentes.find((c) => c.email === item.email)
+    /*
+     * `citext`: para o banco "Maria@x.com" e "maria@x.com" são o MESMO valor, e
+     * o índice único trata assim. Comparar com `===` aqui faria o contato
+     * gravado com maiúscula passar por inexistente, e o INSERT esbarraria no
+     * índice — o 23505 de novo, agora por causa da caixa.
+     */
+    const alvo = item.email.toLowerCase()
+    const achado = existentes.find((c) => c.email?.toLowerCase() === alvo)
     if (achado) return achado
   }
   return null
@@ -226,14 +269,33 @@ function achar(existentes: ContatoExistente[], item: LinhaValidada): ContatoExis
 function montarAtualizacao(
   existente: ContatoExistente,
   item: LinhaValidada,
+  donos: Donos,
 ): Partial<typeof contacts.$inferInsert> | null {
   const mudanca: Partial<typeof contacts.$inferInsert> = {}
 
+  /*
+   * Telefone, e-mail e código são ÚNICOS por organização. Preencher o campo
+   * vazio de um contato com um valor que já pertence a outro é a mesma colisão
+   * que derrubava a importação inteira, só que pela porta do UPDATE. Quando há
+   * dono, deixamos como está: juntar dois cadastros é decisão de gente, não de
+   * planilha.
+   */
+  const livre = (mapa: Map<string, string>, valor: string) => {
+    const dono = mapa.get(valor)
+    return dono === undefined || dono === existente.id
+  }
+
   if (!existente.name && item.nome) mudanca.name = item.nome
-  if (!existente.phoneE164 && item.telefone) mudanca.phoneE164 = item.telefone
-  if (!existente.email && item.email) mudanca.email = item.email
+  if (!existente.phoneE164 && item.telefone && livre(donos.telefone, item.telefone)) {
+    mudanca.phoneE164 = item.telefone
+  }
+  if (!existente.email && item.email && livre(donos.email, item.email)) {
+    mudanca.email = item.email
+  }
   if (!existente.cpf && item.cpf) mudanca.cpf = item.cpf
-  if (!existente.externalId && item.externalId) mudanca.externalId = item.externalId
+  if (!existente.externalId && item.externalId && livre(donos.externo, item.externalId)) {
+    mudanca.externalId = item.externalId
+  }
 
   const novas = item.tags.filter((t) => !existente.tags.includes(t))
   if (novas.length > 0) mudanca.tags = [...existente.tags, ...novas]
@@ -252,17 +314,10 @@ async function abrirLeads(
   orgId: string,
   validas: LinhaValidada[],
   contatoDaLinha: Map<number, string>,
+  etapa: { pipelineId: string; stageId: string },
   opcoes: { ownerId?: string | null; origem?: string },
   agora: Date,
 ): Promise<number> {
-  const etapa = await primeiraEtapa(tx, orgId)
-  if (!etapa) {
-    // Sem funil configurado não há onde pôr o cartão. Os contatos entraram, que
-    // é o que serve para disparo; dizer isso alto é melhor que fingir sucesso.
-    log.warn('sem funil padrão: contatos importados sem lead')
-    return 0
-  }
-
   const ids = [...new Set([...contatoDaLinha.values()])]
   if (ids.length === 0) return 0
 

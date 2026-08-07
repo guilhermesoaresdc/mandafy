@@ -230,6 +230,104 @@ describe.skipIf(!habilitado)('§9.1 — importação de lista', () => {
     expect(repetida.resultado.leadsCriados).toBe(0)
   })
 
+  /*
+   * O 23505 que apareceu em produção.
+   *
+   * A conferência deduplicava por UMA chave (`external_id ?? telefone ??
+   * e-mail`), mas o banco tem TRÊS índices únicos. Estas duas linhas são a
+   * mesma pessoa e passavam as duas: a primeira é identificada pelo telefone,
+   * a segunda pelo e-mail — chaves diferentes, nenhuma repetição aparente. O
+   * INSERT então tentava gravar dois contatos com o mesmo e-mail.
+   *
+   * Cada `it` abaixo é uma das três colisões possíveis. Uma só não bastaria:
+   * o defeito era a ideia de "uma chave", não o telefone nem o e-mail.
+   */
+  it('junta duas linhas que compartilham o e-mail mas não o telefone', async () => {
+    const { conferencia, resultado } = await importarCsv(
+      'nome;telefone;email\nMaria;11988887777;maria@exemplo.com\nMaria S.;;maria@exemplo.com\n',
+    )
+
+    expect(conferencia.repetidas).toBe(1)
+    expect(resultado.criados).toBe(1)
+  })
+
+  it('junta duas linhas que compartilham o telefone mas não o e-mail', async () => {
+    const { resultado } = await importarCsv(
+      'external_id;nome;telefone\nAP-1;Maria;11988887777\n;Maria S.;11988887777\n',
+    )
+
+    expect(resultado.criados).toBe(1)
+  })
+
+  it('junta duas linhas que compartilham o código da plataforma', async () => {
+    const { resultado } = await importarCsv(
+      'external_id;nome;telefone\nAP-1;Maria;11988887777\nAP-1;Maria S.;11966665555\n',
+    )
+
+    expect(resultado.criados).toBe(1)
+  })
+
+  /*
+   * Juntar não pode significar perder. A segunda linha costuma existir
+   * justamente porque traz o que falta na primeira — foi assim que a planilha
+   * virou duas linhas.
+   */
+  it('completa a primeira linha com o que a repetida trazia de novo', async () => {
+    const { conferencia } = await importarCsv(
+      'nome;telefone;email;tags\n' +
+        'Maria;11988887777;;vip\n' +
+        ';11988887777;maria@exemplo.com;black\n',
+    )
+
+    // O nome da primeira permanece: é o que a prévia mostrou.
+    expect(conferencia.validas).toHaveLength(1)
+    expect(conferencia.validas[0]?.nome).toBe('Maria')
+
+    const maria = await buscarPorTelefone('+5511988887777')
+    expect(maria?.email).toBe('maria@exemplo.com')
+    expect([...(maria?.tags ?? [])].sort()).toEqual(['black', 'vip'])
+  })
+
+  /* Para o banco o e-mail é `citext`: a caixa não distingue duas pessoas. */
+  it('reconhece o contato gravado com e-mail em outra caixa', async () => {
+    await admin`
+      INSERT INTO contacts (org_id, name, email, optin_source)
+      VALUES (${ORG}, 'Maria', 'Maria@Exemplo.com', 'checkout')`
+
+    const { resultado } = await importarCsv('nome;email\nMaria;maria@exemplo.com\n')
+
+    expect(resultado.criados).toBe(0)
+    expect(resultado.atualizados).toBe(1)
+  })
+
+  /*
+   * Completar campo vazio é bom, menos quando o valor já é de outra pessoa: o
+   * índice único recusaria, e a importação inteira cairia junto.
+   */
+  it('não dá a um contato o telefone que já é de outro', async () => {
+    await admin`
+      INSERT INTO contacts (org_id, name, phone_e164, optin_source) VALUES
+        (${ORG}, 'Dona do número', '+5511988887777', 'checkout')`
+    await admin`
+      INSERT INTO contacts (org_id, name, email, optin_source) VALUES
+        (${ORG}, 'Sem número', 'sem@exemplo.com', 'checkout')`
+
+    // A planilha afirma que quem tem esse e-mail também tem aquele telefone.
+    const { resultado } = await importarCsv('email;telefone\nsem@exemplo.com;11988887777\n')
+
+    // Casa pelo telefone, que é a chave mais confiável — e nada colide.
+    expect(resultado.criados).toBe(0)
+
+    const semNumero = await comoUsuario(async (tx) => {
+      const [c] = await tx
+        .select()
+        .from(contacts)
+        .where(and(eq(contacts.orgId, ORG), eq(contacts.email, 'sem@exemplo.com')))
+      return c
+    })
+    expect(semNumero?.phoneE164).toBeNull()
+  })
+
   it('rejeita quem não tem como ser contatado', async () => {
     const { conferencia, resultado } = await importarCsv(
       'nome;telefone;email\nMaria;11988887777;\nFantasma;;\nRuim;123;\n',
