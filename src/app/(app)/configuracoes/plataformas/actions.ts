@@ -157,6 +157,59 @@ export type UltimoEvento = {
   processadoEm: Date | null
 }
 
+/** Uma linha do histórico de recebidos. Sem o payload — ele é grande. */
+export type EventoRecebido = {
+  id: string
+  nome: string | null
+  recebidoEm: Date
+  processadoEm: Date | null
+  erro: string | null
+}
+
+/**
+ * TUDO que chegou por este webhook, do mais recente para o mais antigo.
+ *
+ * A tela mostrava só o último evento, e isso basta para o passo 2 — "chegou
+ * alguma coisa?". Não basta para operar: quem liga a plataforma dispara vários
+ * eventos seguidos para conferir, e cada novo apaga o anterior da vista. Se o
+ * cadastro funcionou e o pagamento não, a tela mostra só o pagamento e a pessoa
+ * conclui que nada funciona.
+ *
+ * É também onde o "não aproveitado" deixa de ser um susto e vira uma lista de
+ * trabalho: quais nomes de evento a plataforma manda e quais deles o mapa ainda
+ * não traduz.
+ */
+export async function eventosRecebidos(
+  sourceId: string,
+  limite = 50,
+): Promise<EventoRecebido[]> {
+  const user = await requireAdmin()
+
+  return withTenant(tenantOf(user), async (tx) => {
+    const linhas = await tx
+      .select({
+        id: eventsRaw.id,
+        payload: eventsRaw.payload,
+        receivedAt: eventsRaw.receivedAt,
+        processedAt: eventsRaw.processedAt,
+        error: eventsRaw.error,
+      })
+      .from(eventsRaw)
+      .where(eq(eventsRaw.sourceId, sourceId))
+      .orderBy(desc(eventsRaw.receivedAt))
+      .limit(limite)
+
+    return linhas.map((linha) => ({
+      // `bigint` chega como string do driver; a tela só a usa como chave.
+      id: String(linha.id),
+      nome: nomeDoEvento(linha.payload),
+      recebidoEm: linha.receivedAt,
+      processadoEm: linha.processedAt,
+      erro: linha.error,
+    }))
+  })
+}
+
 export async function ultimoPayload(sourceId: string): Promise<UltimoEvento | null> {
   const user = await requireAdmin()
 

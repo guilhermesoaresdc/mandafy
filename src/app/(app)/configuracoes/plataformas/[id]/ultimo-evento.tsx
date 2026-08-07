@@ -43,12 +43,23 @@ function achatar(valor: unknown, prefixo = '$'): [string, string][] {
 export function UltimoEventoRecebido({
   evento,
   fuso,
-  sugerido,
+  traduzido,
+  deFabrica,
 }: {
   evento: UltimoEvento
   fuso: string
-  /** O evento canônico que o Mandafy já sabe traduzir a partir deste nome. */
-  sugerido: string | null
+  /**
+   * O que o mapa SALVO desta plataforma traduz para este nome.
+   *
+   * É o único que decide o destino do evento — e é o que a tela precisa
+   * mostrar. Enquanto ela lia o mapa de fábrica, afirmava "O Mandafy entende
+   * `payment-by-deposit` como `order.paid`" logo abaixo de "não foi aproveitado:
+   * não está no mapa de eventos". Duas frases contraditórias na mesma tela, e a
+   * tranquilizadora era a errada.
+   */
+  traduzido: string | null
+  /** O que o Mandafy traz de fábrica para este nome, se souber. */
+  deFabrica: string | null
 }) {
   const campos = achatar(evento.payload).filter(([caminho]) => !caminho.includes('_mandafy_'))
 
@@ -103,11 +114,26 @@ export function UltimoEventoRecebido({
       */}
       {evento.nome ? (
         <p className="text-2xs text-ink-2">
-          {sugerido ? (
+          {traduzido ? (
             <>
-              O Mandafy entende <code className="font-mono">{evento.nome}</code> como{' '}
-              <code className="font-mono text-ink">{sugerido}</code> — é esse o evento que os
+              Esta plataforma traduz <code className="font-mono">{evento.nome}</code> para{' '}
+              <code className="font-mono text-ink">{traduzido}</code> — é esse o evento que os
               fluxos escutam.
+            </>
+          ) : deFabrica ? (
+            /*
+              O caso que a tela escondia, e o mais fácil de resolver: o Mandafy
+              CONHECE este nome, mas o mapa desta plataforma não o tem. Antes
+              esta era a mesma frase do caso acima, e ela dizia que estava tudo
+              certo enquanto o evento era descartado.
+            */
+            <>
+              <span className="text-warn">
+                O mapa desta plataforma não traduz <code className="font-mono">{evento.nome}</code>.
+              </span>{' '}
+              O Mandafy conhece esse nome — ele normalmente vira{' '}
+              <code className="font-mono text-ink">{deFabrica}</code>. Acrescente essa linha no
+              passo 3, em &ldquo;Quando chegar&rdquo;, e os fluxos passam a escutá-lo.
             </>
           ) : (
             <>
