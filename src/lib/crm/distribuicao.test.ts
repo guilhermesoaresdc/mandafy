@@ -76,12 +76,50 @@ describe('distribuir em lote', () => {
 })
 
 describe('regras de criação automática (§9.3)', () => {
-  it('traz as três regras sugeridas pela spec', () => {
+  it('traz as três regras sugeridas pela spec, mais a de cadastro novo', () => {
     expect(REGRAS_PADRAO.map((r) => r.evento)).toEqual([
+      '*',
       'order.created',
       'order.paid',
       'contact.inactive_30d',
     ])
+  })
+
+  it('quem chega pela primeira vez vira lead, seja qual for o evento', () => {
+    // O caso mais comum do webhook: alguém se cadastra na plataforma e não
+    // existia na base. Antes disso virava contato e parava aí — o funil só
+    // recebia quem já tinha histórico.
+    const cadastro = regrasAplicaveis({
+      evento: 'user.created',
+      valorCents: null,
+      jaComprou: false,
+      contatoNovo: true,
+    })
+
+    expect(cadastro.map((r) => r.chave)).toEqual(['contato_novo'])
+    expect(cadastro[0]?.atrasoSegundos).toBeUndefined()
+  })
+
+  it('quem já estava na base não vira lead a cada evento', () => {
+    const conhecido = regrasAplicaveis({
+      evento: 'user.created',
+      valorCents: null,
+      jaComprou: false,
+      contatoNovo: false,
+    })
+
+    expect(conhecido).toEqual([])
+  })
+
+  it('cadastro novo que já chega comprando aciona as duas regras', () => {
+    const regras = regrasAplicaveis({
+      evento: 'order.paid',
+      valorCents: 30_000,
+      jaComprou: false,
+      contatoNovo: true,
+    })
+
+    expect(regras.map((r) => r.chave)).toEqual(['contato_novo', 'compra_alta'])
   })
 
   it('order.created aciona a regra do PIX não pago', () => {

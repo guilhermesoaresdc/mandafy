@@ -119,6 +119,53 @@ describe.skipIf(!habilitado)('§4 — normalizar o evento que chegou', () => {
     expect(contato?.phone_e164).toBe('+5511972425144')
   })
 
+  /*
+   * O CONTATO NASCIA SEM CONSENTIMENTO, E A BASE INTEIRA FICAVA MUDA.
+   *
+   * O cadastro entrava, virava contato, e todo envio promocional parava na
+   * guarda com `sem_optin` — para gente que aceitou receber no cadastro da
+   * plataforma, antes de o webhook sair de lá. A importação por planilha já
+   * registrava o aceite; a ingestão, não.
+   */
+  it('quem se cadastra na plataforma entra com o consentimento registrado', async () => {
+    const rawId = await chegar(NOVO_USUARIO)
+    await normalizeRawEvent(rawId)
+
+    const [contato] = await admin<{ optin_at: Date | null; optin_source: string | null }[]>`
+      SELECT optin_at, optin_source FROM contacts WHERE org_id = ${ORG}`
+
+    expect(contato?.optin_at, 'sem data de aceite, nada promocional sai').not.toBeNull()
+    // `checkout`: o aceite veio do cadastro na plataforma, não de planilha.
+    expect(contato?.optin_source).toBe('checkout')
+  })
+
+  it('quem já estava na base sem aceite passa a ter, com a data do evento', async () => {
+    await admin`INSERT INTO contacts (org_id, phone_e164, name)
+                VALUES (${ORG}, ${NOVO_USUARIO.phone}, 'Antigo')`
+
+    await normalizeRawEvent(await chegar(NOVO_USUARIO))
+
+    const [contato] = await admin<{ optin_at: Date | null }[]>`
+      SELECT optin_at FROM contacts WHERE org_id = ${ORG}`
+    expect(contato?.optin_at).not.toBeNull()
+  })
+
+  /*
+   * A linha que não se cruza: consentimento é registro, não reativação. Quem
+   * pediu para sair continua fora, por mais eventos que a plataforma mande.
+   */
+  it('quem pediu para sair NÃO volta por causa de um evento novo', async () => {
+    await admin`INSERT INTO contacts (org_id, phone_e164, name, opted_out_at)
+                VALUES (${ORG}, ${NOVO_USUARIO.phone}, 'Saiu', now())`
+
+    await normalizeRawEvent(await chegar(NOVO_USUARIO))
+
+    const [contato] = await admin<{ optin_at: Date | null; opted_out_at: Date | null }[]>`
+      SELECT optin_at, opted_out_at FROM contacts WHERE org_id = ${ORG}`
+    expect(contato?.optin_at).toBeNull()
+    expect(contato?.opted_out_at).not.toBeNull()
+  })
+
   it('o evento processado é MARCADO, e a varredura não o pega de novo', async () => {
     const rawId = await chegar(NOVO_USUARIO)
     await normalizeRawEvent(rawId)

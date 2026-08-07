@@ -67,6 +67,7 @@ export function distribuir(
 export type RegraCriacao = {
   chave: string
   rotulo: string
+  /** O evento que aciona a regra, ou `'*'` para qualquer um. */
   evento: string
   /** Nome da etapa em que o lead nasce. */
   etapa: string
@@ -74,11 +75,35 @@ export type RegraCriacao = {
   valorMinimoCents?: number
   /** Espera antes de criar, em segundos. */
   atrasoSegundos?: number
+  /** Só vale quando o contato acabou de entrar na base por este evento. */
+  somenteContatoNovo?: boolean
   explicacao: string
 }
 
-/** As três regras sugeridas por §9.3. */
+/** As regras de §9.3, mais a de cadastro novo. */
 export const REGRAS_PADRAO: RegraCriacao[] = [
+  /*
+   * Primeira da lista porque é a que responde por quase todo evento de webhook.
+   *
+   * As três regras de §9.3 dependem de comportamento — pagou, não pagou,
+   * sumiu — e nenhuma delas cobre o caso mais comum de todos: alguém que a
+   * banca nunca viu acaba de se cadastrar. Esse cadastro virava contato e
+   * parava por aí; o funil só recebia quem já tinha histórico, e quem chegava
+   * agora ficava invisível para o time comercial.
+   *
+   * `evento: '*'` de propósito: a plataforma nomeia o cadastro de formas
+   * diferentes (`user.created`, `order.created` de quem nunca comprou), e o que
+   * importa não é qual evento trouxe a pessoa, e sim que ela não estava aqui.
+   * Por isso `somenteContatoNovo` — sem ele, todo evento viraria lead.
+   */
+  {
+    chave: 'contato_novo',
+    rotulo: 'Cadastro novo na plataforma',
+    evento: '*',
+    etapa: 'Novo',
+    somenteContatoNovo: true,
+    explicacao: 'Chegou pela plataforma e ainda não existia na base.',
+  },
   {
     chave: 'pix_nao_pago_24h',
     rotulo: 'PIX sem pagamento em 24h',
@@ -109,6 +134,8 @@ export type ContextoRegra = {
   valorCents: number | null
   /** Já comprou alguma vez? A regra de reativação depende disso. */
   jaComprou: boolean
+  /** O contato nasceu neste evento? A regra de cadastro novo depende disso. */
+  contatoNovo?: boolean
 }
 
 /** As regras que este evento aciona. */
@@ -117,7 +144,11 @@ export function regrasAplicaveis(
   regras: readonly RegraCriacao[] = REGRAS_PADRAO,
 ): RegraCriacao[] {
   return regras.filter((regra) => {
-    if (regra.evento !== ctx.evento) return false
+    if (regra.evento !== '*' && regra.evento !== ctx.evento) return false
+
+    // Regra de cadastro: quem já estava na base não vira lead de novo a cada
+    // evento que a plataforma manda.
+    if (regra.somenteContatoNovo && !ctx.contatoNovo) return false
 
     if (regra.valorMinimoCents !== undefined) {
       if (ctx.valorCents === null || ctx.valorCents < regra.valorMinimoCents) return false

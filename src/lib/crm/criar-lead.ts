@@ -19,6 +19,8 @@ export type EventoParaLead = {
   orgId: string
   tipo: string
   contactId: string | null
+  /** O contato entrou na base agora, por este evento (§9.3). */
+  contatoNovo?: boolean
   dados: Record<string, unknown>
 }
 
@@ -60,6 +62,7 @@ export async function criarLeadDoEvento(
     evento: evento.tipo,
     valorCents: valorDos(evento.dados),
     jaComprou: contato.totalOrders > 0 || contato.totalPaidCents > 0,
+    contatoNovo: evento.contatoNovo ?? false,
   }
 
   const regras = regrasAplicaveis(ctx)

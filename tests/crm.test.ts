@@ -214,6 +214,29 @@ describe.skipIf(!habilitado)('CRM (§9)', () => {
       dados,
     })
 
+    /*
+     * O buraco que este bloco fecha: as três regras de §9.3 dependem de
+     * comportamento — pagou, não pagou, sumiu — e nenhuma cobria o caso mais
+     * comum do webhook, que é alguém se cadastrar pela primeira vez. Esse
+     * cadastro virava contato e parava aí, invisível para o time comercial.
+     */
+    it('quem chega pela primeira vez vira lead, seja qual for o evento', async () => {
+      const recemChegado = uid('c25')
+      await admin`INSERT INTO contacts (id, org_id, name) VALUES (${recemChegado}, ${ORG}, 'Recém-chegado')`
+
+      const r = await comoAdmin((tx) =>
+        criarLeadDoEvento(tx, { ...evento('user.created', recemChegado), contatoNovo: true }),
+      )
+
+      expect(r[0]).toMatchObject({ criado: true, regra: 'contato_novo' })
+      if (r[0]?.criado) expect(r[0].ownerId, 'lead sem dono não é trabalhado').toBeTruthy()
+    })
+
+    it('quem já estava na base não vira lead a cada evento', async () => {
+      const r = await comoAdmin((tx) => criarLeadDoEvento(tx, evento('user.created', CONTATO_ANA)))
+      expect(r).toEqual([])
+    })
+
     it('compra acima de R$ 200 cria lead e atribui no rodízio', async () => {
       const contatoNovo = uid('c20')
       await admin`INSERT INTO contacts (id, org_id, name) VALUES (${contatoNovo}, ${ORG}, 'Cliente Novo')`

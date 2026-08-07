@@ -22,6 +22,9 @@ export type NormalizeOutcome =
   | { status: 'ignorado'; motivo: string }
   | { status: 'erro'; motivo: string }
 
+/** O que o upsert de contato devolve: quem é, e se acabou de nascer. */
+type ContatoDoEvento = { id: string; criado: boolean }
+
 /**
  * Cria ou atualiza o contato a partir do que veio no evento.
  *
@@ -31,13 +34,26 @@ export type NormalizeOutcome =
  *
  * Campos vazios nunca sobrescrevem valores existentes: um evento que não traz
  * e-mail não pode apagar o e-mail que já tínhamos.
+ *
+ * CONSENTIMENTO (§14.1)
+ *
+ * Quem chega por aqui se cadastrou na plataforma de sorteio — o aceite acontece
+ * ANTES, no formulário de cadastro, e é a plataforma que o coleta. O contato
+ * nascia com `optin_at` nulo mesmo assim, e o resultado era toda mensagem
+ * promocional parando na guarda com `sem_optin`: a base inteira entrava e nada
+ * saía. É o mesmo defeito que `importar.ts` já resolvia do lado da planilha,
+ * onde a importação registra `optin_source = 'import'` com data.
+ *
+ * Aqui a origem é `checkout`: o consentimento veio do cadastro na plataforma.
+ * Registrar a data é o que torna a afirmação auditável — a guarda continua de
+ * pé, e continua barrando quem pediu para sair.
  */
 async function upsertContact(
   tx: Tx,
   orgId: string,
   dados: NormalizedContact,
   ocorridoEm: Date,
-): Promise<string | null> {
+): Promise<ContatoDoEvento | null> {
   const temIdentidade = dados.externalId || dados.phoneE164 || dados.email
   if (!temIdentidade) return null
 
@@ -64,11 +80,26 @@ async function upsertContact(
         cpf: dados.cpf ?? undefined,
         externalId: dados.externalId ?? undefined,
         telegramChatId: dados.telegramChatId ?? undefined,
+        /*
+         * Quem já estava na base e não tinha consentimento registrado passa a
+         * ter — com a data do evento, não com a de hoje. Sem este preenchimento
+         * a correção valeria só para cadastro novo, e a base inteira que entrou
+         * antes continuaria muda.
+         *
+         * `opted_out_at IS NULL` é a linha que não se cruza: quem pediu para
+         * sair não volta por causa de um evento da plataforma.
+         */
+        optinAt: sql`CASE WHEN ${contacts.optedOutAt} IS NULL
+                          THEN COALESCE(${contacts.optinAt}, ${ocorridoEm.toISOString()}::timestamptz)
+                          ELSE ${contacts.optinAt} END`,
+        optinSource: sql`CASE WHEN ${contacts.optedOutAt} IS NULL
+                              THEN COALESCE(${contacts.optinSource}, 'checkout')
+                              ELSE ${contacts.optinSource} END`,
         lastEventAt: ocorridoEm,
         updatedAt: new Date(),
       })
       .where(eq(contacts.id, existente.id))
-    return existente.id
+    return { id: existente.id, criado: false }
   }
 
   const [criado] = await tx
@@ -81,12 +112,15 @@ async function upsertContact(
       email: dados.email ?? null,
       cpf: dados.cpf ?? null,
       telegramChatId: dados.telegramChatId ?? null,
+      // O aceite é do cadastro na plataforma, e é dele que vem a data.
+      optinSource: 'checkout',
+      optinAt: ocorridoEm,
       firstSeenAt: ocorridoEm,
       lastEventAt: ocorridoEm,
     })
     .returning({ id: contacts.id })
 
-  return criado?.id ?? null
+  return criado ? { id: criado.id, criado: true } : null
 }
 
 /** Processa um registro de `events_raw`. Idempotente por `rawId`. */
@@ -171,7 +205,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
       // que nenhuma política por dono bloqueie a ingestão.
       { orgId: source.orgId, userId: source.orgId, isAdmin: true },
       async (tx) => {
-        const contactId = await upsertContact(tx, source.orgId, normalizado.contact, ocorridoEm)
+        const contato = await upsertContact(tx, source.orgId, normalizado.contact, ocorridoEm)
 
         const [gravado] = await tx
           .insert(events)
@@ -180,7 +214,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
             sourceId: source.id,
             type: normalizado.type,
             externalId: normalizado.externalId ?? null,
-            contactId,
+            contactId: contato?.id ?? null,
             occurredAt: ocorridoEm,
             data: normalizado.data,
             rawId: raw.id,
@@ -190,7 +224,9 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
           .onConflictDoNothing()
           .returning({ id: events.id, contactId: events.contactId })
 
-        return gravado ?? null
+        // `contatoNovo` viaja com o evento porque é o que decide, lá embaixo,
+        // se este cadastro vira lead — e só quem fez o upsert sabe disso.
+        return gravado ? { ...gravado, contatoNovo: contato?.criado ?? false } : null
       },
     )
 
@@ -249,6 +285,7 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
           orgId: source.orgId,
           tipo: normalizado.type,
           contactId: eventId.contactId,
+          contatoNovo: eventId.contatoNovo,
           dados: normalizado.data,
         }),
     ).catch((erro: unknown) => {
