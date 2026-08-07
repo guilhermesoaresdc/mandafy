@@ -111,9 +111,34 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
     processed_at: string | null
   }>(sql`SELECT * FROM mandafy_evento_cru(${rawId})`)
 
-  if (!bruto) return { status: 'erro', motivo: 'evento_cru_nao_encontrado' }
+  /*
+   * OS DOIS ERROS ABAIXO PRECISAM MARCAR A LINHA, e não marcavam.
+   *
+   * Eles são os únicos caminhos de saída daqui que não passavam por
+   * `marcarProcessado` — e o efeito era o pior possível: o evento continuava
+   * com `processed_at` e `error` nulos, que é exatamente o que a varredura de
+   * pendentes procura. Ela o pegava de novo no minuto seguinte, e no seguinte,
+   * para sempre.
+   *
+   * Na tela, ele ficava "na fila" indefinidamente. Não "não aproveitado", que
+   * mandaria olhar o mapeamento; "na fila", que diz "aguarde". O batimento
+   * respondia 200 com `normalizados: 0`, o painel dizia que o evento nunca
+   * chegou, e não havia erro em lugar nenhum para procurar.
+   *
+   * Um evento que o sistema não consegue ler não é um evento pendente: é um
+   * evento com defeito, e precisa dizer isso.
+   */
+  if (!bruto) {
+    await marcarProcessado(rawId, 'evento_cru_nao_encontrado: a linha sumiu ou a origem foi removida')
+    return { status: 'erro', motivo: 'evento_cru_nao_encontrado' }
+  }
+
   if (bruto.processed_at) return { status: 'ignorado', motivo: 'ja_processado' }
-  if (!bruto.source_id) return { status: 'erro', motivo: 'sem_conector' }
+
+  if (!bruto.source_id) {
+    await marcarProcessado(rawId, 'sem_conector: o evento chegou sem origem vinculada')
+    return { status: 'erro', motivo: 'sem_conector' }
+  }
 
   const raw = {
     id: Number(bruto.id),
@@ -258,7 +283,23 @@ export async function normalizeRawEvent(rawId: number): Promise<NormalizeOutcome
  * estiver fora, o evento já está salvo e o ACK sai mesmo assim. Esta varredura
  * é o que garante que ele acabe processado.
  */
-export async function reprocessPending(limite = 100): Promise<number> {
+export type VarreduraPendentes = {
+  /** Quantos viraram evento canônico nesta passagem. */
+  processados: number
+  /** Quantos estavam pendentes quando a varredura começou. */
+  vistos: number
+  /**
+   * Quantos de cada desfecho — e é isto que responde "por que zero?".
+   *
+   * `normalizados: 0` é ambíguo do jeito mais caro possível: significa "não
+   * havia nada a fazer" e também "havia, e nada deu certo". Enquanto a
+   * varredura devolvia só um número, as duas situações eram a mesma linha na
+   * resposta do batimento — e a segunda ficou meses invisível.
+   */
+  motivos: Record<string, number>
+}
+
+export async function reprocessPending(limite = 100): Promise<VarreduraPendentes> {
   /*
    * Também por função (drizzle/0023), e pelo mesmo motivo do resto: sem
    * contexto de tenant esta consulta devolvia zero linhas e a varredura
@@ -271,12 +312,31 @@ export async function reprocessPending(limite = 100): Promise<number> {
   )
 
   let processados = 0
+  const motivos: Record<string, number> = {}
+
   for (const pendente of pendentes) {
     const resultado = await normalizeRawEvent(Number(pendente.id))
-    if (resultado.status === 'processado') processados += 1
+
+    if (resultado.status === 'processado') {
+      processados += 1
+      continue
+    }
+
+    // O motivo, e não só a contagem: `mapeamento_invalido` manda ajustar o
+    // passo 3 da tela de conexão, `sem_conector` manda olhar a origem, e
+    // `evento_cru_nao_encontrado` é defeito nosso. Três correções diferentes.
+    const chave = resultado.motivo ?? resultado.status
+    motivos[chave] = (motivos[chave] ?? 0) + 1
   }
 
-  return processados
+  if (pendentes.length > 0 && processados === 0) {
+    log.warn('varredura achou pendentes e não normalizou nenhum', {
+      vistos: pendentes.length,
+      motivos,
+    })
+  }
+
+  return { processados, vistos: pendentes.length, motivos }
 }
 
 /**

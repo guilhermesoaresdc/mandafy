@@ -109,6 +109,20 @@ const VALIDADE_SEGUNDOS = 90
 /** Pega a trava, ou devolve `false` se outro batimento está em curso. */
 export async function pegarTrava(agora = new Date()): Promise<boolean> {
   /*
+   * DUAS ARMADILHAS DE DRIVER, as duas descobertas rodando e nenhuma visível
+   * para o `tsc`:
+   *
+   *   1. o corte é calculado aqui, e não com `make_interval(secs => $n)` no
+   *      SQL — na notação nomeada o Postgres não infere o tipo do parâmetro e
+   *      recusa a consulta inteira;
+   *   2. as datas vão em ISO com `::timestamptz`, e não como `Date`. Num `sql`
+   *      bruto quem converteria é a camada de coluna do Drizzle, que não está
+   *      no caminho: o driver recebe o objeto e estoura.
+   */
+  const marca = agora.toISOString()
+  const vencidaAntesDe = new Date(agora.getTime() - VALIDADE_SEGUNDOS * 1000).toISOString()
+
+  /*
    * `INSERT … ON CONFLICT DO UPDATE … WHERE` num comando só, de propósito: ler
    * e depois escrever abriria a janela em que dois batimentos leem "livre"
    * antes de qualquer um gravar. O `WHERE` do `DO UPDATE` é avaliado sobre a
@@ -116,22 +130,6 @@ export async function pegarTrava(agora = new Date()): Promise<boolean> {
    *
    * Sem linha devolvida = outro batimento tem a trava e ela ainda vale.
    */
-  /*
-   * O corte vem calculado daqui, e não de `make_interval(secs => $n)` no SQL:
-   * ali o Postgres não consegue inferir o tipo do parâmetro dentro da notação
-   * nomeada e recusa a consulta inteira. Uma data pronta não tem essa dúvida —
-   * e lê melhor.
-   */
-  /*
-   * ISO com `::timestamptz`, e não o `Date` cru.
-   *
-   * Num `sql` bruto o driver não converte `Date` sozinho — ele recebe o objeto
-   * e estoura com "The string argument must be of type string". Quem converte é
-   * a camada de coluna do Drizzle, que aqui não está no caminho.
-   */
-  const marca = agora.toISOString()
-  const vencidaAntesDe = new Date(agora.getTime() - VALIDADE_SEGUNDOS * 1000).toISOString()
-
   const linhas = await db.execute<{ pego: boolean }>(sql`
     INSERT INTO system_state (key, ran_at)
     VALUES (${CHAVE_TRAVA}, ${marca}::timestamptz)
@@ -194,7 +192,10 @@ export async function manutencaoHoraria(): Promise<ResultadoHorario> {
    * do ar não derrube o ACK. Sem esta varredura, esses eventos ficariam
    * parados para sempre.
    */
-  const retomados = await reprocessPending(200)
+  // A manutenção horária é a rede de segurança da varredura do batimento; aqui
+  // interessa só o número, porque o detalhe já foi para o log e para a resposta
+  // de cada batida — de hora em hora ele chegaria tarde demais para diagnosticar.
+  const { processados: retomados } = await reprocessPending(200)
 
   // Envios gravados que não chegaram à fila — a mesma rede de segurança, do
   // outro lado do sistema.
