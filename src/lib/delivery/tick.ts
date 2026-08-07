@@ -74,6 +74,14 @@ export type ResultadoTick = {
   reagendadosParaRetry: number
   /** Eventos recém-chegados que viraram evento normalizado nesta passagem. */
   normalizados: number
+  /**
+   * Por que os pendentes NÃO viraram evento — presente só quando sobrou algum.
+   *
+   * `normalizados: 0` significa tanto "não havia nada" quanto "havia, e nada
+   * deu certo", e as duas apareciam idênticas na resposta do batimento. Esta
+   * chave separa as duas, e vai direto para o corpo que o agendador registra.
+   */
+  normalizacao?: Record<string, number>
   /** Sobrou trabalho vencido que não coube no orçamento. */
   sobrou: boolean
 }
@@ -284,7 +292,9 @@ export async function tickDeEnvio(
    * quem normaliza marca `processed_at`, e o índice único de `events` recusa a
    * segunda gravação do mesmo evento.
    */
-  resultado.normalizados = await reprocessPending(LIMITE_NORMALIZACAO)
+  const varredura = await reprocessPending(LIMITE_NORMALIZACAO)
+  resultado.normalizados = varredura.processados
+  if (varredura.vistos > varredura.processados) resultado.normalizacao = varredura.motivos
 
   resultado.reagendadosParaRetry = await reativarFalhas(agora)
 
