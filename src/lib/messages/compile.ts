@@ -1,6 +1,6 @@
 import type { Channel } from '@/db/schema/enums'
 import type { Bloco, No } from './ast'
-import { variaveisUsadas } from './ast'
+import { percorrer, variaveisUsadas } from './ast'
 import { contarSms, cortarParaSegmentos, type ContagemSms } from './gsm'
 import { parseMensagem } from './parse'
 import { renderEmail, renderSms, renderTelegram, renderWhatsapp, type OpcoesSms } from './render'
@@ -175,4 +175,28 @@ export function compilarTodos(
  */
 export function variaveisDoCorpo(fonte: string): string[] {
   return variaveisUsadas(parseMensagem(fonte).blocos)
+}
+
+/**
+ * Variáveis que o corpo exige E que não têm valor padrão.
+ *
+ * A diferença para `variaveisDoCorpo` é o que decide se um disparo em lote sai
+ * ou falha: `{{nome|primeiro_nome|"parceiro"}}` está no corpo mas nunca impede
+ * o envio — sem valor, sai "parceiro". Já `{{sorteio}}` sem valor derruba a
+ * compilação com `variavel_ausente`.
+ *
+ * Quem manda uma mensagem para uma lista precisa preencher só a segunda lista.
+ * Pedir as duas faria a tela exigir o nome do contato, que o sistema já tem.
+ */
+export function variaveisObrigatorias(fonte: string): string[] {
+  const exigidas: string[] = []
+  const vistas = new Set<string>()
+
+  percorrer(parseMensagem(fonte).blocos, (no) => {
+    if (no.tipo !== 'variavel' || vistas.has(no.nome)) return
+    vistas.add(no.nome)
+    if (!no.filtros.some((f) => f.tipo === 'padrao')) exigidas.push(no.nome)
+  })
+
+  return exigidas
 }

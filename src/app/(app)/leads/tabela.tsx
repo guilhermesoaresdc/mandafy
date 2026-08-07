@@ -6,6 +6,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { Badge, Button } from '@/components/ui'
 import { cn, formatBRL } from '@/lib/utils'
 import { atribuirAction, type LeadState } from './actions'
+import { PainelDisparo } from './disparo'
+import type { MensagemParaDisparo } from '@/db/queries/messages'
 
 /**
  * A tabela de leads (§9.1).
@@ -50,14 +52,20 @@ export function TabelaLeads({
   linhas,
   consultores,
   podeReatribuir,
+  mensagens,
+  podeEnviar,
 }: {
   linhas: LinhaLead[]
   consultores: { id: string; name: string }[]
   podeReatribuir: boolean
+  /** Mensagens ativas, para o disparo em lote. */
+  mensagens: MensagemParaDisparo[]
+  podeEnviar: boolean
 }) {
   const [busca, setBusca] = useState('')
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
   const [estado, atribuir, atribuindo] = useActionState<LeadState, FormData>(atribuirAction, {})
+  const [disparando, setDisparando] = useState(false)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -105,6 +113,19 @@ export function TabelaLeads({
           className="min-w-48 flex-1 rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-xs text-ink outline-none placeholder:text-pending focus-visible:border-ink"
         />
 
+        {/*
+          * Disparar vem ANTES de atribuir na barra, e é o botão cheio.
+          *
+          * Atribuir responsável é organização interna; enviar é o que a pessoa
+          * veio fazer depois de importar a lista. A ordem da barra é a ordem
+          * de importância, não a de quando cada uma foi construída.
+          */}
+        {selecionados.size > 0 && podeEnviar ? (
+          <Button size="sm" onClick={() => setDisparando(true)}>
+            Enviar mensagem
+          </Button>
+        ) : null}
+
         {/* Seleção múltipla → ações em lote (§9.1) */}
         {selecionados.size > 0 && podeReatribuir ? (
           <form action={atribuir} className="flex items-center gap-2">
@@ -144,6 +165,17 @@ export function TabelaLeads({
           CSV
         </a>
       </div>
+
+      {disparando ? (
+        <PainelDisparo
+          alvos={[...selecionados].map((id) => {
+            const lead = linhas.find((l) => l.id === id)
+            return { id, nome: lead?.contactName ?? lead?.title ?? 'sem nome' }
+          })}
+          mensagens={mensagens}
+          aoFechar={() => setDisparando(false)}
+        />
+      ) : null}
 
       {estado.erro ? (
         <p role="alert" className="text-2xs text-fail">

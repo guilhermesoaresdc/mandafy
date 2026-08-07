@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compilar, compilarTodos, variaveisDoCorpo } from './compile'
+import { compilar, compilarTodos, variaveisDoCorpo, variaveisObrigatorias } from './compile'
 import { sementeDeTexto } from './spintax'
 import { analisar } from './analise'
 
@@ -217,5 +217,36 @@ describe('semente', () => {
   it('sementeDeTexto é estável', () => {
     expect(sementeDeTexto('abc')).toBe(sementeDeTexto('abc'))
     expect(sementeDeTexto('abc')).not.toBe(sementeDeTexto('abd'))
+  })
+})
+
+describe('variaveisObrigatorias — o que o disparo em lote precisa perguntar', () => {
+  /*
+   * A distinção que decide se um envio sai: variável com padrão nunca derruba
+   * a compilação, então pedi-la na tela seria exigir o que o sistema já
+   * resolve — inclusive o nome, que ele lê do contato.
+   */
+  it('ignora quem tem valor padrão', () => {
+    expect(variaveisObrigatorias('Oi {{nome|primeiro_nome|"parceiro"}}, o {{sorteio}} fecha já!'))
+      .toEqual(['sorteio'])
+  })
+
+  it('lista as que sairiam vazias', () => {
+    expect(variaveisObrigatorias('{{sorteio}} — 1º prêmio {{milhar}}. {{link_resultado}}')).toEqual(
+      ['sorteio', 'milhar', 'link_resultado'],
+    )
+  })
+
+  it('filtro nomeado não é valor padrão', () => {
+    // `{{valor_cents|moeda}}` formata, mas continua exigindo o valor.
+    expect(variaveisObrigatorias('Prêmio de {{valor_cents|moeda}}')).toEqual(['valor_cents'])
+  })
+
+  it('enxerga dentro do spintax, como a irmã', () => {
+    expect(variaveisObrigatorias('{Oi|Olá {{cupom}}} tudo bem')).toEqual(['cupom'])
+  })
+
+  it('corpo sem variável não pede nada', () => {
+    expect(variaveisObrigatorias('Boa sorte hoje!')).toEqual([])
   })
 })

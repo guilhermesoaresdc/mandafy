@@ -11,6 +11,7 @@ import {
   type FiltroLeads,
   type FiltroSalvo,
 } from '@/db/queries/leads'
+import { listarMensagensParaDisparo } from '@/db/queries/messages'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { Card, CardBody, Stat } from '@/components/ui'
 import { requireUser, tenantOf } from '@/lib/auth/current'
@@ -38,7 +39,7 @@ export default async function LeadsPage({
   // isto só define o recorte pedido.
   const filtro: FiltroLeads = ehFiltroSalvo(chave) ? filtroSalvo(chave, user.id) : { limite: 1000 }
 
-  const { linhas, total, consultores, vencidas, novos } = await withTenant(
+  const { linhas, total, consultores, vencidas, novos, mensagens } = await withTenant(
     tenantOf(user),
     async (tx) => ({
       linhas: await listarLeads(tx, { ...filtro, limite: 1000 }),
@@ -46,6 +47,7 @@ export default async function LeadsPage({
       consultores: user.isAdmin ? await consultoresAtivos(tx, user.orgId) : [],
       vencidas: await acoesVencidas(tx),
       novos: await novosLeads(tx),
+      mensagens: await listarMensagensParaDisparo(tx),
     }),
   )
 
@@ -132,6 +134,8 @@ export default async function LeadsPage({
           linhas={paraTabela}
           consultores={consultores}
           podeReatribuir={can(user, 'leads.reatribuir')}
+          mensagens={mensagens}
+          podeEnviar={can(user, 'mensagem.enviar_manual')}
         />
       </div>
     </SessionFrame>

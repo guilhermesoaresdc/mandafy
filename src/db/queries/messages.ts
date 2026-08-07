@@ -101,3 +101,59 @@ export async function chaveEmUso(tx: Tx, orgId: string, key: string, exceto?: st
 
   return linhas.some((linha) => linha.id !== exceto)
 }
+
+/** O que a tela de disparo precisa saber de cada mensagem para oferecê-la. */
+export type MensagemParaDisparo = {
+  id: string
+  name: string
+  category: MessageCategory
+  /**
+   * O corpo vai junto de propósito.
+   *
+   * É com ele que a tela descobre, sem ida ao servidor, quais variáveis
+   * precisam ser preenchidas e como a mensagem fica depois de preenchidas. O
+   * mesmo motivo da conferência do importador: quem vai mandar para mil
+   * pessoas precisa ver o texto final antes, não depois.
+   */
+  body: string
+  canaisAtivos: Channel[]
+}
+
+/**
+ * Mensagens que podem ser disparadas para uma lista.
+ *
+ * Só as ativas: mensagem pausada foi pausada por algum motivo, e oferecê-la
+ * aqui seria convidar a um envio que a guarda de entrega recusaria contato por
+ * contato, com o relatório dizendo "25 pulados" sem explicar a escolha.
+ */
+export async function listarMensagensParaDisparo(tx: Tx): Promise<MensagemParaDisparo[]> {
+  const linhas = await tx
+    .select({
+      id: messages.id,
+      name: messages.name,
+      category: messages.category,
+      body: messages.body,
+    })
+    .from(messages)
+    .where(eq(messages.active, true))
+    .orderBy(asc(messages.name))
+
+  if (linhas.length === 0) return []
+
+  const variantes = await tx
+    .select({ messageId: messageVariants.messageId, channel: messageVariants.channel })
+    .from(messageVariants)
+    .where(eq(messageVariants.enabled, true))
+
+  const porMensagem = new Map<string, Set<Channel>>()
+  for (const v of variantes) {
+    const atual = porMensagem.get(v.messageId) ?? new Set<Channel>()
+    atual.add(v.channel)
+    porMensagem.set(v.messageId, atual)
+  }
+
+  return linhas.map((l) => ({
+    ...l,
+    canaisAtivos: CHANNELS.filter((c) => porMensagem.get(l.id)?.has(c)),
+  }))
+}
