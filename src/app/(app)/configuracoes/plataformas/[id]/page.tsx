@@ -9,17 +9,36 @@ import { Badge, Button, Card, CardBody, CardHeader, CardTitle } from '@/componen
 import { eventosPorTipo, resumoNoAr } from '@/db/queries/no-ar'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { serverEnv } from '@/env'
-import { ultimoPayload } from '../actions'
+import { eventosRecebidos, ultimoPayload } from '../actions'
 import { MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
 import { PassoEndereco } from './passo-endereco'
 import { UltimoEventoRecebido } from './ultimo-evento'
+import { EventosRecebidos } from './recebidos'
 import { CombinarCampos } from './combinar-campos'
 
 export const metadata: Metadata = { title: 'Conectar plataforma · Mandafy' }
 export const dynamic = 'force-dynamic'
 
-/** A tradução que o Mandafy já conhece para o nome de cada plataforma. */
-const SUGESTAO_DE_EVENTO: Record<string, string | undefined> = MAPEAMENTO_SUGERIDO.event_map ?? {}
+/**
+ * A tradução que o Mandafy TRAZ DE FÁBRICA — que não é a que ele usa.
+ *
+ * Quem traduz o evento na hora da ingestão é `sources.mapping`, o mapa SALVO
+ * desta plataforma. Esta constante é só o ponto de partida oferecido na tela.
+ *
+ * Enquanto o passo 2 lia daqui, ele afirmava "O Mandafy entende
+ * `payment-by-deposit` como `order.paid`" logo abaixo de "não foi aproveitado:
+ * não está no mapa de eventos" — as duas frases na mesma tela, uma contradizendo
+ * a outra, e a errada era a tranquilizadora. Quem lesse concluía que o
+ * mapeamento estava certo e ia procurar o problema em qualquer outro lugar.
+ */
+const DE_FABRICA: Record<string, string | undefined> = MAPEAMENTO_SUGERIDO.event_map ?? {}
+
+/** O `event_map` gravado nesta plataforma — o único que o motor consulta. */
+function mapaSalvo(mapping: unknown): Record<string, string | undefined> {
+  if (!mapping || typeof mapping !== 'object') return {}
+  const bruto = (mapping as { event_map?: unknown }).event_map
+  return bruto && typeof bruto === 'object' ? (bruto as Record<string, string>) : {}
+}
 
 /**
  * Conectar plataforma, em três passos (§4.2).
@@ -58,7 +77,13 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
 
   if (!plataforma) notFound()
 
-  const ultimo = await ultimoPayload(plataforma.id)
+  const [ultimo, recebidosCrus] = await Promise.all([
+    ultimoPayload(plataforma.id),
+    eventosRecebidos(plataforma.id),
+  ])
+
+  const salvo = mapaSalvo(plataforma.mapping)
+  const nomeDoUltimo = ultimo?.nome ?? ''
 
   let base = 'https://mandafy.vercel.app'
   try {
@@ -103,7 +128,11 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
               <UltimoEventoRecebido
                 evento={ultimo}
                 fuso={user.timezone}
-                sugerido={SUGESTAO_DE_EVENTO[ultimo.nome ?? ''] ?? null}
+                // O mapa SALVO, que é o que decide o destino do evento.
+                traduzido={salvo[nomeDoUltimo] ?? null}
+                // E o de fábrica, para dizer "dá para resolver num clique"
+                // quando ele conhece um nome que o salvo não tem.
+                deFabrica={DE_FABRICA[nomeDoUltimo] ?? null}
               />
             ) : (
               <p className="text-xs text-ink-2">
@@ -113,6 +142,26 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
             )}
           </CardBody>
         </Card>
+
+        {/*
+          O HISTÓRICO DO QUE CHEGOU, e não só o último.
+
+          Um evento por vez responde "chegou alguma coisa?" e nada mais. Quem
+          liga a plataforma dispara vários seguidos para conferir, e cada novo
+          apagava o anterior da vista: com o cadastro funcionando e o pagamento
+          não, a tela mostrava só o pagamento — e a conclusão era "nada funciona".
+        */}
+        {recebidosCrus.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Histórico deste webhook</CardTitle>
+              <span className="text-2xs text-pending">os {recebidosCrus.length} mais recentes</span>
+            </CardHeader>
+            <CardBody>
+              <EventosRecebidos eventos={recebidosCrus} fuso={user.timezone} />
+            </CardBody>
+          </Card>
+        ) : null}
 
         {/*
           O que a plataforma manda DE VERDADE.
@@ -158,6 +207,9 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
           sourceId={plataforma.id}
           mapping={plataforma.mapping}
           payload={ultimo?.payload ?? null}
+          // Todos os nomes que já chegaram, para o passo 3 poder acrescentar de
+          // uma vez os que faltam em vez de um por disparo.
+          nomesRecebidos={recebidosCrus.map((e) => e.nome).filter((n): n is string => Boolean(n))}
         />
       </div>
     </SessionFrame>

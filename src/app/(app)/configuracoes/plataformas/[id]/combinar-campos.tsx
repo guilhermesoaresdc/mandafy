@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom'
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
 import { CANONICAL_EVENTS } from '@/db/schema/enums'
 import { detectarMapeamento } from '@/lib/ingest/detectar'
-import { CAMPOS_CANONICOS } from '@/lib/ingest/mapping'
+import { CAMPOS_CANONICOS, MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
 import { getByPath, listLeafPaths } from '@/lib/ingest/path'
 import { salvarMapeamentoAction, type PlataformaState } from '../actions'
 
@@ -75,14 +75,27 @@ function Salvar() {
   )
 }
 
+/** A tradução que o Mandafy traz de fábrica, por nome de plataforma. */
+const DE_FABRICA: Record<string, string | undefined> = MAPEAMENTO_SUGERIDO.event_map ?? {}
+
 export function CombinarCampos({
   sourceId,
   mapping,
   payload,
+  nomesRecebidos = [],
 }: {
   sourceId: string
   mapping: unknown
   payload: unknown
+  /**
+   * Todos os nomes de evento que já chegaram por este webhook.
+   *
+   * O botão de adicionar só enxergava o evento do ÚLTIMO payload, então quem
+   * recebeu cadastro, PIX gerado e PIX pago tinha de disparar cada um de novo
+   * na plataforma para poder acrescentá-lo — uma volta ao painel da banca por
+   * evento. Com a lista inteira, os que faltam entram de uma vez.
+   */
+  nomesRecebidos?: string[]
 }) {
   const inicial = (mapping ?? {}) as Mapping
   const [state, formAction] = useActionState<PlataformaState, FormData>(salvarMapeamentoAction, {})
@@ -122,6 +135,25 @@ export function CombinarCampos({
    */
   const existe = (caminho: string) =>
     !payload || getByPath(payload, caminho) !== undefined
+
+  /**
+   * Os nomes que já chegaram, ainda não estão no mapa, e o Mandafy sabe
+   * traduzir — com a tradução junto.
+   *
+   * Os três filtros importam. Sem "já chegaram", a lista traria nomes de
+   * plataformas que esta banca não usa. Sem "não estão no mapa", ofereceria
+   * refazer o que já está feito. E sem "sabe traduzir", pediria para adivinhar
+   * o destino de um nome desconhecido — que é justamente o trabalho que o
+   * seletor manual ao lado existe para fazer com calma.
+   */
+  const faltantes = useMemo(
+    () =>
+      [...new Set(nomesRecebidos)]
+        .filter((nome) => nome && !(nome in eventMap))
+        .map((nome) => [nome, DE_FABRICA[nome]] as const)
+        .filter((par): par is readonly [string, string] => Boolean(par[1])),
+    [nomesRecebidos, eventMap],
+  )
 
   const [contato, setContato] = useState<Record<string, string>>(() =>
     comPalpites(inicial.contact ?? {}, detectado.contato, existe),
@@ -322,22 +354,58 @@ export function CombinarCampos({
               ))}
             </div>
 
-            {nomeDoEventoNoPayload && !(nomeDoEventoNoPayload in eventMap) ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="self-start"
-                onClick={() =>
-                  setEventMap((m) => ({
-                    ...m,
-                    // O reconhecido, e não um chute fixo: `order.created` para um
-                    // evento de cadastro seria erro pré-selecionado.
-                    [nomeDoEventoNoPayload]: detectado.eventoCanonico ?? 'order.created',
-                  }))
-                }
-              >
-                Adicionar “{nomeDoEventoNoPayload}”
-              </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {nomeDoEventoNoPayload && !(nomeDoEventoNoPayload in eventMap) ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    setEventMap((m) => ({
+                      ...m,
+                      // O reconhecido, e não um chute fixo: `order.created` para um
+                      // evento de cadastro seria erro pré-selecionado.
+                      [nomeDoEventoNoPayload]: detectado.eventoCanonico ?? 'order.created',
+                    }))
+                  }
+                >
+                  Adicionar “{nomeDoEventoNoPayload}”
+                </Button>
+              ) : null}
+
+              {/*
+                TODOS os que já chegaram e ainda não estão no mapa.
+
+                Sem isto, acrescentar o segundo evento exigia voltar ao painel da
+                plataforma e dispará-lo de novo, só para que ele virasse "o
+                último payload" e o botão acima aparecesse. Uma volta por evento,
+                por um clique que o sistema já tinha como oferecer — ele conhece
+                os nomes que chegaram e conhece a tradução de fábrica de cada um.
+              */}
+              {faltantes.length > 0 ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    setEventMap((m) => ({
+                      ...m,
+                      ...Object.fromEntries(faltantes.map(([nome, canonico]) => [nome, canonico])),
+                    }))
+                  }
+                >
+                  Adicionar os {faltantes.length} que já chegaram
+                </Button>
+              ) : null}
+            </div>
+
+            {faltantes.length > 0 ? (
+              <p className="text-2xs text-pending">
+                {faltantes.map(([nome, canonico], i) => (
+                  <span key={nome}>
+                    {i > 0 ? ' · ' : ''}
+                    <code className="font-mono">{nome}</code> → {canonico}
+                  </span>
+                ))}
+              </p>
             ) : null}
           </section>
 
