@@ -10,6 +10,7 @@ import {
   type Channel,
   type NotificationStatus,
 } from '@/db/schema/enums'
+import { Dica } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { DetalheEnvio } from './detalhe'
 
@@ -105,6 +106,62 @@ function latenciaTexto(linha: LinhaLog): string {
     ? `${linha.latenciaMs}ms`
     : `${(linha.latenciaMs / 1000).toFixed(1)}s`
 }
+
+/**
+ * As colunas, com o que cada uma quer dizer.
+ *
+ * SEIS COLUNAS SEM CABEÇALHO ERAM SEIS ADIVINHAÇÕES
+ *
+ * A tabela nasceu com layout de terminal: densa, monoespaçada, sem cabeçalho —
+ * e num terminal isso funciona porque quem lê já conhece o formato. Aqui não:
+ * a segunda coluna é `zap`/`mail`, a quinta tem um símbolo e uma palavra, e a
+ * última mostra `1.2s` numa linha e `sem_optin` na seguinte. Quem abria pela
+ * primeira vez não tinha como saber o que era o quê, e a informação existia —
+ * só não estava escrita em lugar nenhum.
+ *
+ * A largura da coluna não comporta a explicação, então ela vai na dica. O
+ * cabeçalho fica FIXO no topo da área rolável (`sticky`): rolando mil linhas, a
+ * referência tem de continuar visível — cabeçalho que sai da tela é cabeçalho
+ * que só serve para a primeira tela.
+ */
+const COLUNAS = [
+  {
+    chave: 'quando',
+    rotulo: 'Quando',
+    dica: 'Dia e hora em que a linha foi criada, no horário de Brasília. Para o que ainda não saiu, o envio está marcado para mais tarde — veja a coluna da direita.',
+    classe: 'w-24 pl-3',
+  },
+  {
+    chave: 'canal',
+    rotulo: 'Canal',
+    dica: 'Por onde a mensagem foi (ou iria): WhatsApp, e-mail, SMS ou Telegram.',
+    classe: 'w-12',
+  },
+  {
+    chave: 'contato',
+    rotulo: 'Para quem',
+    dica: 'O nome do contato como está no cadastro. O telefone e o e-mail ficam no detalhe, ao clicar.',
+    classe: 'min-w-0',
+  },
+  {
+    chave: 'mensagem',
+    rotulo: 'Mensagem',
+    dica: 'Qual mensagem do catálogo gerou esta linha. Clique para ver o texto exato que a pessoa recebeu.',
+    classe: 'w-40',
+  },
+  {
+    chave: 'status',
+    rotulo: 'Situação',
+    dica: 'Na fila, saiu, entregue, lida, falhou, cancelada ou pulada. "Pulada" é quando uma regra de proteção barrou o envio de propósito — o motivo aparece à direita.',
+    classe: 'w-28',
+  },
+  {
+    chave: 'tempo',
+    rotulo: 'Tempo / motivo',
+    dica: 'Quanto o provedor levou para aceitar a mensagem. Para o que está agendado, a hora marcada; para o que falhou ou foi pulado, o motivo.',
+    classe: 'w-24 pr-3 text-right',
+  },
+] as const
 
 export function LogAoVivo({
   inicial,
@@ -289,6 +346,26 @@ export function LogAoVivo({
           <div className="max-h-[60vh] overflow-y-auto">
             <table className="w-full border-collapse font-mono text-2xs">
               <caption className="sr-only">Envios dos últimos 3 dias</caption>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-surface-2 text-left">
+                  {COLUNAS.map((coluna) => (
+                    <th
+                      key={coluna.chave}
+                      scope="col"
+                      className={cn(
+                        'border-b border-line py-1.5 pr-2 font-sans text-2xs font-medium whitespace-nowrap text-ink-2',
+                        coluna.classe,
+                      )}
+                    >
+                      <Dica texto={coluna.dica}>
+                        <span className="border-b border-dotted border-ink-2/50">
+                          {coluna.rotulo}
+                        </span>
+                      </Dica>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
                 {visiveis.map((linha) => (
                   <tr
@@ -303,7 +380,7 @@ export function LogAoVivo({
                     }}
                     className="cursor-pointer border-b border-line/50 hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
                   >
-                    <td className="py-1 pr-2 pl-3 whitespace-nowrap text-pending tabular-nums">
+                    <td className="w-24 py-1 pr-2 pl-3 whitespace-nowrap text-pending tabular-nums">
                       {dataEHora(linha.createdAt)}
                     </td>
                     <td className="py-1 pr-2">

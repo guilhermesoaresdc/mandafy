@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
+import { configurarCanais } from './stubs/canais'
 import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { cancelarPorChave, enfileirarEnvio } from '@/lib/delivery/enqueue'
@@ -89,6 +90,9 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     await admin.begin(async (tx) => {
       await tx`DELETE FROM organizations WHERE id = ${ORG}`
       await tx`INSERT INTO organizations (id, name, slug) VALUES (${ORG}, 'Org Entrega', 'entrega-org')`
+      // E-mail, SMS e Telegram configurados: sem isso o enfileiramento barra o
+      // canal antes de gravar (ver `prontidao.ts`), que é o comportamento novo.
+      await configurarCanais(tx as unknown as postgres.Sql, ORG)
       await tx`INSERT INTO users (id, org_id, name, email, password_hash, role) VALUES
         (${USUARIO}, ${ORG}, 'Admin', 'entrega-admin@teste.local', 'x', 'admin')`
 
@@ -164,12 +168,23 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     const enfileirados = resultados.filter((r) => r.situacao === 'enfileirado')
     expect(enfileirados.map((r) => r.canal).sort()).toEqual(['email', 'telegram'])
 
-    // WhatsApp não sai: nenhum número conectado nesta organização. Vira linha
-    // para o histórico explicar, em vez de o envio sumir sem rastro.
+    /*
+     * WhatsApp não sai: nenhum número conectado nesta organização. E NÃO VIRA
+     * LINHA — é `barrado`, não `pulado`.
+     *
+     * A diferença é a razão de o histórico ser legível. Isto é um problema de
+     * configuração, igual para todo mundo: gravar uma linha por contato faria
+     * um lote de mil enterrar a tela inteira sob mil repetições do mesmo aviso,
+     * sem que nenhuma delas dissesse o que consertar. O motivo volta uma vez,
+     * para a tela de quem disparou.
+     */
     expect(resultados.find((r) => r.canal === 'whatsapp')).toMatchObject({
-      situacao: 'pulado',
-      motivo: 'sem_numero_conectado',
+      situacao: 'barrado',
+      motivo: 'nenhum número de WhatsApp conectado',
     })
+
+    const doWhatsapp = (await notificacoes()).filter((l) => l.channel === 'whatsapp')
+    expect(doWhatsapp, 'canal barrado não pode sujar o histórico').toHaveLength(0)
 
     const linhas = await notificacoes()
     const telegram = linhas.find((l) => l.channel === 'telegram')
@@ -202,6 +217,37 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
     expect((await notificacoes()).find((l) => l.channel === 'sms')).toBeUndefined()
   })
 
+  /*
+   * O CANAL SEM CONFIGURAÇÃO NÃO ENTRA NO HISTÓRICO.
+   *
+   * Este é o teste que segura a regra: quando o problema é de CONFIGURAÇÃO —
+   * sem credencial, sem chip, desligado nas configurações —, o envio é barrado
+   * antes de gravar. Um lote de mil contatos com o e-mail sem chave gravava mil
+   * linhas dizendo a mesma coisa; a tela onde se procura UM envio entre milhares
+   * ficava soterrada por um aviso que não é sobre nenhum daqueles contatos.
+   */
+  it('canal sem credencial é barrado e NÃO vira linha no histórico', async () => {
+    await admin`DELETE FROM channel_configs WHERE org_id = ${ORG} AND channel = 'email'`
+
+    const resultados = await comoSistema((tx) =>
+      enfileirarEnvio(tx, { orgId: ORG, contactId: CONTATO, messageId: MENSAGEM, dados: DADOS }),
+    )
+
+    expect(resultados.find((r) => r.canal === 'email')).toMatchObject({
+      situacao: 'barrado',
+      motivo: 'falta a chave do provedor de e-mail',
+    })
+
+    const doEmail = (await notificacoes()).filter((l) => l.channel === 'email')
+    expect(doEmail, 'o problema é de configuração — não é uma linha por contato').toHaveLength(0)
+
+    // E o canal que ESTÁ configurado continua saindo: barrar um não derruba os
+    // outros, senão um e-mail mal configurado calaria o Telegram junto.
+    expect(resultados.find((r) => r.canal === 'telegram')).toMatchObject({
+      situacao: 'enfileirado',
+    })
+  })
+
   it('mas PEDIR um canal desligado vira `skipped` com o motivo', async () => {
     // Aí o pulo é informação: você pediu e não saiu, eis o porquê.
     const resultados = await comoSistema((tx) =>
@@ -228,7 +274,12 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
       enfileirarEnvio(tx, { orgId: ORG, contactId: CONTATO, messageId: MENSAGEM, dados: DADOS }),
     )
 
-    expect(resultados.every((r) => r.situacao === 'pulado')).toBe(true)
+    // O WhatsApp é barrado antes das guardas (sem chip conectado nesta org), e
+    // por isso fica de fora da conta: o que chegou a ser avaliado foi pulado.
+    expect(resultados.filter((r) => r.situacao !== 'barrado')).not.toHaveLength(0)
+    expect(
+      resultados.filter((r) => r.situacao !== 'barrado').every((r) => r.situacao === 'pulado'),
+    ).toBe(true)
     expect((await notificacoes()).every((l) => l.error_code === 'optout')).toBe(true)
   })
 
@@ -255,7 +306,9 @@ describe.skipIf(!habilitado)('Enfileiramento de envio (§5.3, §8.1)', () => {
       enfileirarEnvio(tx, { orgId: ORG, contactId: CONTATO, messageId: MENSAGEM, dados: DADOS }),
     )
 
-    expect(resultados.every((r) => r.situacao === 'pulado')).toBe(true)
+    expect(
+      resultados.filter((r) => r.situacao !== 'barrado').every((r) => r.situacao === 'pulado'),
+    ).toBe(true)
     expect((await notificacoes()).every((l) => l.error_code === 'sem_optin')).toBe(true)
   })
 
@@ -419,6 +472,7 @@ describe.skipIf(!habilitado)('Cancelamento por chave (§5.1)', () => {
     await admin.begin(async (tx) => {
       await tx`DELETE FROM organizations WHERE id = ${ORG2}`
       await tx`INSERT INTO organizations (id, name, slug) VALUES (${ORG2}, 'Org Cancel', 'cancel-org')`
+      await configurarCanais(tx as unknown as postgres.Sql, ORG2)
       await tx`INSERT INTO contacts (id, org_id, name) VALUES (${CONTATO2}, ${ORG2}, 'Ana')`
 
       // Um envio em cada estado que importa, todos com a MESMA chave.

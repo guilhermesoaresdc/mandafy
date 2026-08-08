@@ -1,12 +1,12 @@
 'use client'
 
 import { useActionState, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Badge, Button } from '@/components/ui'
 import { cn, formatBRL } from '@/lib/utils'
 import { atribuirAction, type LeadState } from './actions'
 import { PainelDisparo } from './disparo'
+import { FichaDoLead } from './ficha'
 import type { MensagemParaDisparo } from '@/db/queries/messages'
 
 /**
@@ -64,6 +64,20 @@ export function TabelaLeads({
 }) {
   const [busca, setBusca] = useState('')
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
+  /*
+   * A SELEÇÃO MÚLTIPLA COMEÇA DESLIGADA.
+   *
+   * A caixa de marcar em cada linha estava sempre lá, e uma caixa de marcar é
+   * um convite: a primeira coisa que a tela pedia era escolher, quando o que a
+   * pessoa quase sempre quer é abrir UM lead e olhar. Além do convite errado,
+   * ela roubava a primeira coluna e o primeiro clique — errar o alvo por três
+   * pixels marcava um lead em vez de abri-lo.
+   *
+   * Agora ela aparece quando alguém diz que vai trabalhar em lote. É o mesmo
+   * gesto do Gmail e do Drive, e pelo mesmo motivo.
+   */
+  const [modoSelecao, setModoSelecao] = useState(false)
+  const [ficha, setFicha] = useState<LinhaLead | null>(null)
   const [estado, atribuir, atribuindo] = useActionState<LeadState, FormData>(atribuirAction, {})
   const [disparando, setDisparando] = useState(false)
 
@@ -101,6 +115,20 @@ export function TabelaLeads({
   const todosVisiveisSelecionados =
     visiveis.length > 0 && visiveis.every((l) => selecionados.has(l.id))
 
+  /** Liga o modo lote já com este lead marcado — é o atalho vindo da ficha. */
+  function selecionarDaFicha(id: string): void {
+    setModoSelecao(true)
+    setSelecionados((atual) => new Set(atual).add(id))
+  }
+
+  function sairDoModoSelecao(): void {
+    setModoSelecao(false)
+    setSelecionados(new Set())
+  }
+
+  // Mostrar as caixas exige o direito de fazer algo em lote com elas.
+  const podeLote = podeReatribuir || podeEnviar
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -120,6 +148,23 @@ export function TabelaLeads({
           * veio fazer depois de importar a lista. A ordem da barra é a ordem
           * de importância, não a de quando cada uma foi construída.
           */}
+        {!modoSelecao && podeLote ? (
+          <Button variant="secondary" size="sm" onClick={() => setModoSelecao(true)}>
+            Selecionar vários
+          </Button>
+        ) : null}
+
+        {modoSelecao && selecionados.size === 0 ? (
+          <>
+            <span className="text-2xs text-pending">
+              Marque os leads que vão receber ou mudar de responsável.
+            </span>
+            <Button variant="ghost" size="sm" onClick={sairDoModoSelecao}>
+              Sair da seleção
+            </Button>
+          </>
+        ) : null}
+
         {selecionados.size > 0 && podeEnviar ? (
           <Button size="sm" onClick={() => setDisparando(true)}>
             Enviar mensagem
@@ -147,12 +192,7 @@ export function TabelaLeads({
             <Button type="submit" size="sm" disabled={atribuindo}>
               {atribuindo ? 'Atribuindo…' : `Atribuir ${selecionados.size}`}
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelecionados(new Set())}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={sairDoModoSelecao}>
               Limpar
             </Button>
           </form>
@@ -187,7 +227,7 @@ export function TabelaLeads({
       <div className="overflow-hidden rounded-xl border border-line bg-surface">
         {/* Cabeçalho fora da área rolável, para não rolar junto. */}
         <div className="flex items-center gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-2xs text-pending">
-          {podeReatribuir ? (
+          {modoSelecao ? (
             <input
               type="checkbox"
               checked={todosVisiveisSelecionados}
@@ -224,7 +264,7 @@ export function TabelaLeads({
                     className="absolute top-0 left-0 flex w-full items-center gap-2 border-b border-line/50 px-3 text-2xs hover:bg-surface-2"
                     style={{ height: item.size, transform: `translateY(${item.start}px)` }}
                   >
-                    {podeReatribuir ? (
+                    {modoSelecao ? (
                       <input
                         type="checkbox"
                         checked={selecionados.has(lead.id)}
@@ -234,15 +274,21 @@ export function TabelaLeads({
                       />
                     ) : null}
 
-                    <Link
-                      href={`/leads/${lead.id}`}
-                      className="min-w-0 flex-1 truncate text-ink underline-offset-2 hover:underline"
+                    {/*
+                      No modo lote o clique MARCA, e não abre: com as caixas na
+                      tela, quem clica na linha está escolhendo. Fora dele, o
+                      clique abre a ficha — a janela leve, não a página inteira.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => (modoSelecao ? alternar(lead.id) : setFicha(lead))}
+                      className="min-w-0 flex-1 truncate text-left text-ink underline-offset-2 hover:underline"
                     >
                       {lead.title}
                       {lead.contactPhone ? (
                         <span className="ml-2 font-mono text-pending">{lead.contactPhone}</span>
                       ) : null}
-                    </Link>
+                    </button>
 
                     <span className="hidden w-28 truncate sm:block">
                       <Badge tone={lead.status === 'ganho' ? 'ok' : lead.status === 'perdido' ? 'fail' : 'pending'}>
@@ -278,6 +324,12 @@ export function TabelaLeads({
         {visiveis.length} de {linhas.length} lead(s)
         {selecionados.size > 0 ? ` · ${selecionados.size} selecionado(s)` : ''}
       </p>
+
+      <FichaDoLead
+        lead={ficha}
+        aoFechar={() => setFicha(null)}
+        {...(podeLote ? { aoSelecionar: selecionarDaFicha } : {})}
+      />
     </div>
   )
 }

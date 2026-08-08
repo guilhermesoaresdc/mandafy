@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray } from 'drizzle-orm'
+import { asc, count, desc, eq, inArray } from 'drizzle-orm'
 import type { Tx } from '@/db'
 import { flows, flowSteps, jitterProfiles, messages } from '@/db/schema'
 import type { Channel } from '@/db/schema/enums'
@@ -64,6 +64,22 @@ export type PassoResumo = {
    * fluxo faz o que diz.
    */
   amostra: string
+  /**
+   * O texto CRU da mensagem — é o que o editor do passo abre.
+   *
+   * `amostra` é o texto já compilado com o contato de exemplo, ótimo para ler e
+   * inútil para editar: salvar o compilado gravaria "Olá MARIA APARECIDA" no
+   * lugar de `{{nome}}` e todo mundo passaria a receber o nome da Maria.
+   */
+  messageBody: string
+  /**
+   * Em quantos OUTROS passos esta mesma mensagem é usada.
+   *
+   * Editar o texto aqui edita a mensagem, e a mensagem pode estar em mais
+   * lugares. Sem este número, a tela deixaria alguém ajustar o lembrete de PIX
+   * de um fluxo e mudar, sem saber, o de outro.
+   */
+  usadaEmOutrosPassos: number
   canais: Channel[] | null
   ritmo: string | null
 }
@@ -149,6 +165,22 @@ export async function buscarFluxo(tx: Tx, id: string): Promise<FluxoCompleto | n
     : []
 
   const porId = new Map(mensagens.map((m) => [m.id, m]))
+
+  /*
+   * Onde mais cada mensagem aparece. Uma consulta para todas, e não uma por
+   * passo: a cadência tem poucos passos, mas o padrão de "uma consulta por item
+   * da lista" é o que transforma uma tela rápida numa tela lenta quando o
+   * catálogo cresce.
+   */
+  const outrosUsos = idsMensagens.length
+    ? await tx
+        .select({ messageId: flowSteps.messageId, total: count() })
+        .from(flowSteps)
+        .where(inArray(flowSteps.messageId, idsMensagens))
+        .groupBy(flowSteps.messageId)
+    : []
+
+  const usosPorMensagem = new Map(outrosUsos.map((u) => [u.messageId, Number(u.total)]))
   const perfis = await mapaDeRitmos(tx, [
     fluxo.jitterProfileId,
     ...linhas.map((l) => l.jitterProfileId),
@@ -173,6 +205,9 @@ export async function buscarFluxo(tx: Tx, id: string): Promise<FluxoCompleto | n
       messageKey: mensagem?.key ?? '',
       messageAtiva: mensagem?.active ?? false,
       amostra: amostraDe(mensagem?.body ?? '', linha.id),
+      messageBody: mensagem?.body ?? '',
+      // Menos este passo: o que interessa é "além daqui, onde mais?".
+      usadaEmOutrosPassos: Math.max((usosPorMensagem.get(linha.messageId) ?? 1) - 1, 0),
       canais: (linha.channelsOverride as Channel[] | null) ?? null,
       ritmo: linha.jitterProfileId ? (perfis.get(linha.jitterProfileId) ?? null) : null,
     }

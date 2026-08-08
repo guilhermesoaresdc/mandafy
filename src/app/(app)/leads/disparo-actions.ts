@@ -10,6 +10,7 @@ import { assertCan } from '@/lib/rbac'
 import { createLogger } from '@/lib/logger'
 import { enfileirarEnvio } from '@/lib/delivery/enqueue'
 import type { MotivoSkip } from '@/lib/delivery/guards'
+import type { Channel } from '@/db/schema/enums'
 import { TAMANHO_DA_LEVA } from '@/lib/delivery/lote'
 
 /**
@@ -54,6 +55,16 @@ export type ResultadoDisparo = {
   /** Motivo → quantos contatos. É o que explica um "enviou menos que o esperado". */
   pulados: Partial<Record<MotivoSkip, number>>
   falhas: number
+  /**
+   * Canais que nem chegaram a ser tentados: sem credencial, sem número
+   * conectado, desligados nas configurações.
+   *
+   * Vêm uma vez, e não uma por contato — é problema de configuração, igual
+   * para todo mundo. Antes disso a mesma informação chegava como mil linhas
+   * `skipped` no histórico, o que é o pior dos dois mundos: enterrava a tela
+   * de onde se procura um envio e não dizia a ninguém o que consertar.
+   */
+  barrados: { canal: Channel; motivo: string }[]
 }
 
 export type EstadoDisparo = { erro?: string; resultado?: ResultadoDisparo }
@@ -89,7 +100,7 @@ export async function dispararLoteAction(bruto: unknown): Promise<EstadoDisparo>
         .from(leads)
         .where(and(eq(leads.orgId, user.orgId), inArray(leads.id, leadIds)))
 
-      const parcial: ResultadoDisparo = { enfileirados: 0, pulados: {}, falhas: 0 }
+      const parcial: ResultadoDisparo = { enfileirados: 0, pulados: {}, falhas: 0, barrados: [] }
 
       for (const alvo of alvos) {
         const canais = await enfileirarEnvio(tx, {
@@ -110,6 +121,12 @@ export async function dispararLoteAction(bruto: unknown): Promise<EstadoDisparo>
             parcial.enfileirados += 1
           } else if (canal.situacao === 'pulado') {
             parcial.pulados[canal.motivo] = (parcial.pulados[canal.motivo] ?? 0) + 1
+          } else if (canal.situacao === 'barrado') {
+            // Uma vez por canal, e não uma por contato: o motivo é o mesmo para
+            // a lista inteira.
+            if (!parcial.barrados.some((b) => b.canal === canal.canal)) {
+              parcial.barrados.push({ canal: canal.canal, motivo: canal.motivo })
+            }
           } else {
             parcial.falhas += 1
           }

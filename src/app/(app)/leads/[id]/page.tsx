@@ -6,20 +6,17 @@ import { withTenant } from '@/db'
 import { detalharLead, etapasDoPipeline } from '@/db/queries/leads'
 import { events, messages, notifications } from '@/db/schema'
 import { SessionFrame } from '@/components/shell/app-shell'
-import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ChannelIcon } from '@/components/ui'
-import { NOTIFICATION_STATUS_LABELS, type Channel, type NotificationStatus } from '@/db/schema/enums'
+import { Button, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
 import { requireUser, tenantOf } from '@/lib/auth/current'
+import { can } from '@/lib/rbac'
 import { formatBRL } from '@/lib/utils'
+import { nomeDoCampo } from '@/lib/vocabulario'
+import { ExcluirLead } from './excluir-lead'
+import { LinhaDoTempo, type ItemLinha } from './linha-do-tempo'
 import { PainelLead } from './painel-lead'
 
 export const metadata: Metadata = { title: 'Lead · Mandafy' }
 export const dynamic = 'force-dynamic'
-
-/** Um item da linha do tempo unificada (§9.1). */
-type ItemLinha =
-  | { tipo: 'atividade'; quando: Date; texto: string; quem: string | null; especie: string }
-  | { tipo: 'evento'; quando: Date; texto: string }
-  | { tipo: 'envio'; quando: Date; canal: Channel; status: NotificationStatus; texto: string }
 
 export default async function LeadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -32,7 +29,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     // Eventos da plataforma e notificações do MESMO contato — é o que torna a
     // linha do tempo "unificada" em vez de três listas separadas.
     const eventosDoContato = await tx
-      .select({ type: events.type, occurredAt: events.occurredAt, data: events.data })
+      .select({
+        type: events.type,
+        occurredAt: events.occurredAt,
+        data: events.data,
+        externalId: events.externalId,
+      })
       .from(events)
       .where(eq(events.contactId, lead.lead.contactId))
       .orderBy(desc(events.occurredAt))
@@ -40,9 +42,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
 
     const envios = await tx
       .select({
+        id: notifications.id,
         channel: notifications.channel,
         status: notifications.status,
         createdAt: notifications.createdAt,
+        messageName: messages.name,
         messageKey: messages.key,
       })
       .from(notifications)
@@ -63,33 +67,45 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const linha: ItemLinha[] = [
     ...lead.atividades.map((a) => ({
       tipo: 'atividade' as const,
-      quando: a.createdAt,
+      quando: a.createdAt.toISOString(),
       texto: a.content ?? a.type,
       quem: a.userName,
       especie: a.type,
     })),
     ...eventosDoContato.map((e) => ({
       tipo: 'evento' as const,
-      quando: e.occurredAt,
-      texto: e.type,
+      quando: e.occurredAt.toISOString(),
+      evento: e.type,
+      dados: e.data,
+      externalId: e.externalId,
     })),
     ...envios.map((n) => ({
       tipo: 'envio' as const,
-      quando: n.createdAt,
+      quando: n.createdAt.toISOString(),
       canal: n.channel,
       status: n.status,
-      texto: n.messageKey ?? 'mensagem',
+      // O NOME da mensagem, não a chave: `pix_lembrete_1` embaixo do nome do
+      // cliente é o dicionário do banco vazando para a ficha (§11.7).
+      texto: n.messageName ?? n.messageKey ?? 'mensagem',
+      notificationId: n.id,
+      criadoEm: n.createdAt.toISOString(),
     })),
-  ].sort((a, b) => b.quando.getTime() - a.quando.getTime())
+  ].sort((a, b) => b.quando.localeCompare(a.quando))
 
   return (
     <SessionFrame
       title={lead.lead.title}
       description={`${lead.stageName} · ${lead.ownerName ?? 'sem responsável'}`}
       actions={
-        <Button asChild variant="ghost" size="sm">
-          <Link href="/leads">Voltar</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Só quem manda no funil apaga cartão (§9.4). */}
+          {can(user, 'leads.reatribuir') ? (
+            <ExcluirLead leadId={lead.lead.id} titulo={lead.lead.title} />
+          ) : null}
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/leads">Voltar</Link>
+          </Button>
+        </div>
       }
     >
       <div className="grid max-w-4xl gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -106,12 +122,20 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <CardBody className="flex flex-col gap-1">
               <p className="text-xs text-ink">{lead.contactName ?? '—'}</p>
               {lead.contactPhone ? (
-                <p className="font-mono text-2xs text-ink-2">{lead.contactPhone}</p>
+                <p className="font-mono text-2xs text-ink-2">
+                  <span className="text-pending">{nomeDoCampo('telefone')}: </span>
+                  {lead.contactPhone}
+                </p>
               ) : null}
               {lead.contactEmail ? (
-                <p className="font-mono text-2xs text-ink-2">{lead.contactEmail}</p>
+                <p className="font-mono text-2xs text-ink-2">
+                  <span className="text-pending">{nomeDoCampo('email')}: </span>
+                  {lead.contactEmail}
+                </p>
               ) : null}
-              <p className="mt-1 font-mono text-2xs text-pending">origem: {lead.lead.source}</p>
+              <p className="mt-1 text-2xs text-pending">
+                Entrou por: <span className="text-ink-2">{lead.lead.source}</span>
+              </p>
             </CardBody>
           </Card>
 
@@ -127,53 +151,10 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         <Card>
           <CardHeader>
             <CardTitle>Linha do tempo</CardTitle>
-            <span className="text-2xs text-pending">plataforma, envios e notas juntos</span>
+            <span className="text-2xs text-pending">clique para ver tudo do item</span>
           </CardHeader>
-          <CardBody className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
-            {linha.length === 0 ? (
-              <p className="text-2xs text-pending">Nada registrado ainda.</p>
-            ) : (
-              linha.map((item, i) => (
-                <div key={i} className="flex items-start gap-2 border-b border-line/40 pb-2 last:border-0">
-                  <span className="w-20 shrink-0 font-mono text-2xs text-pending tabular-nums">
-                    {item.quando.toLocaleString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      timeZone: 'America/Sao_Paulo',
-                    })}
-                  </span>
-
-                  <div className="min-w-0 flex-1">
-                    {item.tipo === 'envio' ? (
-                      <div className="flex items-center gap-1.5">
-                        <ChannelIcon channel={item.canal} className="size-3" aria-hidden="true" />
-                        <span className="truncate font-mono text-2xs text-ink-2">{item.texto}</span>
-                        <Badge
-                          tone={
-                            ['sent', 'delivered', 'read'].includes(item.status)
-                              ? 'ok'
-                              : ['failed', 'dead'].includes(item.status)
-                                ? 'fail'
-                                : 'pending'
-                          }
-                        >
-                          {NOTIFICATION_STATUS_LABELS[item.status]}
-                        </Badge>
-                      </div>
-                    ) : item.tipo === 'evento' ? (
-                      <p className="font-mono text-2xs text-ink-2">{item.texto}</p>
-                    ) : (
-                      <p className="text-2xs text-ink">
-                        {item.texto}
-                        {item.quem ? <span className="text-pending"> — {item.quem}</span> : null}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
+          <CardBody className="max-h-[60vh] overflow-y-auto py-0">
+            <LinhaDoTempo itens={linha} podeReenviar={can(user, 'mensagem.enviar_manual')} />
           </CardBody>
         </Card>
       </div>

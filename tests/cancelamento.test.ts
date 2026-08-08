@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
+import { configurarCanais, conectarWhatsapp } from './stubs/canais'
 import * as schema from '@/db/schema'
 import type { Tx } from '@/db'
 import { processarEvento } from '@/lib/flows/run'
@@ -101,6 +102,7 @@ describe.skipIf(!habilitado)('§5.1 — o PIX abandonado, resolvido', () => {
       await tx`DELETE FROM flows WHERE org_id = ${ORG}`
       await tx`DELETE FROM organizations WHERE id = ${ORG}`
       await tx`INSERT INTO organizations (id, name, slug) VALUES (${ORG}, 'Org PIX', 'pix-org')`
+      await configurarCanais(tx as unknown as postgres.Sql, ORG)
       await tx`INSERT INTO contacts (id, org_id, name, phone_e164, optin_at) VALUES
         (${CONTATO}, ${ORG}, 'Ana', '+5511988887777', now())`
 
@@ -108,6 +110,9 @@ describe.skipIf(!habilitado)('§5.1 — o PIX abandonado, resolvido', () => {
       // ele o envio vira `skipped: sem_numero_conectado`.
       await tx`INSERT INTO wa_instances (id, org_id, name, evolution_url, instance_name, status, daily_cap, min_interval_seconds)
         VALUES (${INSTANCIA}, ${ORG}, 'Chip 1', 'http://evolution:8080', 'chip1', 'conectado', 1000, 5)`
+      // Chip conectado E com chave: sem a chave o canal é barrado antes de
+      // enfileirar, e a cadência inteira deste teste não chegaria a existir.
+      await conectarWhatsapp(tx as unknown as postgres.Sql, INSTANCIA)
 
       // As quatro mensagens do fluxo, só no WhatsApp para o teste ficar legível.
       const nomes = ['pix_lembrete_1', 'pix_lembrete_2', 'pix_ultima_chance', 'pix_expirou_oferta']

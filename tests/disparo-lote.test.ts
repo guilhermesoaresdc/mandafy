@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import postgres from 'postgres'
+import { configurarCanais } from './stubs/canais'
 import * as schema from '@/db/schema'
 import { notifications } from '@/db/schema'
 import type { Tx } from '@/db'
@@ -71,6 +72,7 @@ describe.skipIf(!habilitado)('§5 — disparo manual para uma lista', () => {
     await admin.begin(async (tx) => {
       await tx`DELETE FROM organizations WHERE id = ${ORG}`
       await tx`INSERT INTO organizations (id, name, slug) VALUES (${ORG}, 'Org Disparo', 'disparo-org')`
+      await configurarCanais(tx as unknown as postgres.Sql, ORG)
       await tx`INSERT INTO users (id, org_id, name, email, password_hash, role) VALUES
         (${ADMIN}, ${ORG}, 'Admin', 'disparo-admin@teste.local', 'x', 'admin')`
 
@@ -200,6 +202,7 @@ describe.skipIf(!habilitado)('§5 — mensagens oferecidas para disparo', () => 
     await admin.begin(async (tx) => {
       await tx`DELETE FROM organizations WHERE id = ${ORG2}`
       await tx`INSERT INTO organizations (id, name, slug) VALUES (${ORG2}, 'Org Lista', 'disparo-lista')`
+      await configurarCanais(tx as unknown as postgres.Sql, ORG2)
       await tx`INSERT INTO users (id, org_id, name, email, password_hash, role) VALUES
         (${ADMIN2}, ${ORG2}, 'Admin', 'disparo-lista@teste.local', 'x', 'admin')`
       await tx`INSERT INTO messages (id, org_id, key, name, category, body, active) VALUES

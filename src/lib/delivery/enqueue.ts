@@ -13,6 +13,7 @@ import { decidirEnvio, type ContatoParaEnvio, type MotivoSkip } from './guards'
 import { sortearAtraso, type PerfilJitter } from './jitter'
 import { escolherParaAgendamento } from './warmup'
 import { carregarInstancias } from './config'
+import { prontidaoDosCanais } from './prontidao'
 import type { JanelaSilencio } from './quiet-hours'
 
 /**
@@ -66,6 +67,16 @@ export type ResultadoCanal =
     }
   | { canal: Channel; situacao: 'pulado'; motivo: MotivoSkip }
   | { canal: Channel; situacao: 'falhou'; motivo: string }
+  /*
+   * BARRADO ≠ PULADO, e a diferença é onde cada um aparece.
+   *
+   * Barrado é problema de CONFIGURAÇÃO — sem credencial, sem número conectado,
+   * canal desligado nas configurações. Vale para todo mundo igual, não depende
+   * do contato, e por isso NÃO vira linha em `notifications`: um lote de mil
+   * gravava mil linhas dizendo a mesma coisa e enterrava o histórico. Aparece
+   * na tela de quem disparou, uma vez, com o passo para consertar.
+   */
+  | { canal: Channel; situacao: 'barrado'; motivo: string }
 
 const PERFIL_PADRAO: PerfilJitter = { mode: 'humano', minSeconds: 8, maxSeconds: 25 }
 
@@ -150,16 +161,39 @@ export async function enfileirarEnvio(
    * específico — um passo de fluxo apontando para SMS, ou o botão de teste.
    * Aí o pulo é informação de verdade: você pediu e não saiu, eis o porquê.
    */
-  const alvos = pedido.canais ?? variantes.filter((v) => v.enabled).map((v) => v.channel)
+  const pedidos = pedido.canais ?? variantes.filter((v) => v.enabled).map((v) => v.channel)
   const perfil = pedido.perfil ?? (pedido.teste ? PERFIL_TESTE : PERFIL_PADRAO)
+
+  const resultados: ResultadoCanal[] = []
+
+  /*
+   * A CONFIGURAÇÃO É CONFERIDA ANTES DO PRIMEIRO CONTATO.
+   *
+   * Uma consulta por canal, por disparo — não uma por contato. Canal que não
+   * tem como enviar sai da lista aqui e não gera linha nenhuma no histórico; o
+   * motivo volta em `barrado` para a tela que disparou mostrar.
+   */
+  const prontidao = await prontidaoDosCanais(tx, pedido.orgId, pedidos)
+  const alvos: Channel[] = []
+
+  for (const canal of pedidos) {
+    const estado = prontidao.get(canal)
+    if (estado && !estado.pronto) {
+      resultados.push({
+        canal,
+        situacao: 'barrado',
+        motivo: estado.motivo ?? 'o canal não está configurado',
+      })
+      continue
+    }
+    alvos.push(canal)
+  }
 
   // Carregadas uma vez para todos os canais: o rodízio só interessa ao
   // WhatsApp, e uma consulta por canal seria desperdício.
   const instancias = alvos.includes('whatsapp')
     ? await carregarInstancias(tx, pedido.orgId)
     : []
-
-  const resultados: ResultadoCanal[] = []
 
   for (const canal of alvos) {
     const variante = variantes.find((v) => v.channel === canal)
@@ -228,10 +262,21 @@ export async function enfileirarEnvio(
     if (canal === 'whatsapp') {
       const escolhida = escolherParaAgendamento(instancias)
       if (!escolhida) {
-        // Não é indisponibilidade passageira: a organização não tem WhatsApp
-        // utilizável. Vira linha para o histórico explicar, em vez de sumir.
-        resultados.push({ canal, situacao: 'pulado', motivo: 'sem_numero_conectado' })
-        await registrarPulo(tx, pedido, canal, variante?.id ?? null, 'sem_numero_conectado', agora)
+        /*
+         * Rede de segurança, e não mais o caminho normal.
+         *
+         * `prontidaoDosCanais` já barrou o WhatsApp sem chip lá em cima, sem
+         * gravar nada — antes daqui, esta era a linha que enchia o histórico de
+         * `sem_numero_conectado`, uma por contato do lote. Chegar até aqui
+         * agora significa que o último chip caiu ENTRE a conferência e este
+         * contato, o que é raro e é informação de verdade: vira `barrado`, sem
+         * linha, e o lote inteiro segue com o mesmo motivo.
+         */
+        resultados.push({
+          canal,
+          situacao: 'barrado',
+          motivo: 'nenhum número de WhatsApp conectado',
+        })
         continue
       }
       instanciaId = escolhida.id

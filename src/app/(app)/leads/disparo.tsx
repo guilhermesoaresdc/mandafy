@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Button, ChannelIcon } from '@/components/ui'
 import type { MensagemParaDisparo } from '@/db/queries/messages'
+import { CHANNEL_LABELS } from '@/db/schema/enums'
 import { compilar, variaveisObrigatorias } from '@/lib/messages/compile'
 import { MOTIVO_LABELS, type MotivoSkip } from '@/lib/delivery/guards'
 import { TAMANHO_DA_LEVA } from '@/lib/delivery/lote'
@@ -83,7 +84,7 @@ export function PainelDisparo({
     // Um id por disparo, o mesmo em todas as levas: é a chave que impede a
     // mesma pessoa de receber duas vezes se algo for repetido.
     const loteId = crypto.randomUUID()
-    const total: ResultadoDisparo = { enfileirados: 0, pulados: {}, falhas: 0 }
+    const total: ResultadoDisparo = { enfileirados: 0, pulados: {}, falhas: 0, barrados: [] }
 
     for (let i = 0; i < alvos.length; i += TAMANHO_DA_LEVA) {
       const leva = alvos.slice(i, i + TAMANHO_DA_LEVA)
@@ -114,6 +115,11 @@ export function PainelDisparo({
 
       total.enfileirados += estado.resultado.enfileirados
       total.falhas += estado.resultado.falhas
+      // Um canal barrado é barrado para a lista inteira: some as repetições em
+      // vez de listar o mesmo problema uma vez por leva.
+      for (const barrado of estado.resultado.barrados) {
+        if (!total.barrados.some((b) => b.canal === barrado.canal)) total.barrados.push(barrado)
+      }
       for (const [motivo, n] of Object.entries(estado.resultado.pulados)) {
         const m = motivo as MotivoSkip
         total.pulados[m] = (total.pulados[m] ?? 0) + (n ?? 0)
@@ -148,6 +154,31 @@ export function PainelDisparo({
                 <span className="font-mono text-ink">{formatNumber(n)}</span> — {MOTIVO_LABELS[motivo]}
               </p>
             ))}
+          </div>
+        ) : null}
+
+        {/*
+          O CANAL QUE NEM FOI TENTADO, ANTES DE TUDO.
+
+          Este é o aviso que mais muda o que fazer a seguir: não é "fulano não
+          recebeu", é "este canal não tem como enviar para ninguém". Antes ele
+          chegava como uma linha `skipped` por contato no histórico — mil linhas
+          repetindo o mesmo problema, e nenhuma delas dizendo o que consertar.
+        */}
+        {resultado.barrados.length > 0 ? (
+          <div className="flex flex-col gap-1 rounded-lg border border-fail/40 px-3 py-2">
+            <p className="text-2xs font-medium text-fail">Canal sem conexão — nada saiu por ele</p>
+            {resultado.barrados.map((b) => (
+              <p key={b.canal} className="text-2xs text-ink-2">
+                <span className="text-ink">{CHANNEL_LABELS[b.canal]}</span>: {b.motivo}
+              </p>
+            ))}
+            <a
+              href="/canais"
+              className="mt-0.5 text-2xs text-ink underline underline-offset-2"
+            >
+              Abrir Canais para resolver
+            </a>
           </div>
         ) : null}
 

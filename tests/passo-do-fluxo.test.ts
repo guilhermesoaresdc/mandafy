@@ -154,6 +154,155 @@ describe.skipIf(!habilitado)('§5.1 — ajustar o passo de um fluxo', () => {
     return linha!
   }
 
+  /*
+   * MONTAR A CADÊNCIA PELA TELA, e não só ajustar o que o seed criou.
+   *
+   * Acrescentar e remover passo mexem em `flow_steps.position`, que tem índice
+   * único por fluxo. É o tipo de coisa que passa no `tsc` e estoura no banco:
+   * remover o passo 2 de três deixa 1 e 3, e o próximo "acrescentar" tentaria a
+   * posição 4 sobre uma cadência de dois — ou pior, a renumeração colidiria com
+   * uma linha que ainda ocupa o número de destino.
+   */
+  describe('acrescentar e remover passos', () => {
+    async function acrescentar(campos: Record<string, string> = {}) {
+      const { adicionarPassoAction } = await import('@/app/(app)/fluxos/actions')
+
+      const form = new FormData()
+      form.append('flowId', FLUXO)
+      for (const [nome, valor] of Object.entries(campos)) form.append(nome, valor)
+
+      return adicionarPassoAction({}, form)
+    }
+
+    async function posicoes() {
+      const linhas = await admin<{ position: number }[]>`
+        SELECT position FROM flow_steps WHERE flow_id = ${FLUXO} ORDER BY position`
+      return linhas.map((l) => l.position)
+    }
+
+    it('o passo novo entra no fim, com a mensagem escolhida', async () => {
+      const r = await acrescentar({ messageId: MSG_ALVO, atraso: '2h' })
+      expect(r.ok).toBe(true)
+
+      expect(await posicoes()).toEqual([1, 2])
+
+      const [novo] = await admin<{ delay_seconds: number; message_id: string }[]>`
+        SELECT delay_seconds, message_id FROM flow_steps
+        WHERE flow_id = ${FLUXO} AND position = 2`
+      expect(novo?.delay_seconds).toBe(7200)
+      expect(novo?.message_id).toBe(MSG_ALVO)
+    })
+
+    it('sem mensagem escolhida, nasce uma em branco para o passo', async () => {
+      // É o caminho que evita o vaivém: criar a mensagem em outra tela antes de
+      // poder acrescentar o passo aqui.
+      const r = await acrescentar({ atraso: '30min' })
+      expect(r.ok).toBe(true)
+
+      const [novo] = await admin<{ body: string; name: string; active: boolean }[]>`
+        SELECT m.body, m.name, m.active FROM flow_steps s
+        JOIN messages m ON m.id = s.message_id
+        WHERE s.flow_id = ${FLUXO} AND s.position = 2`
+
+      expect(novo?.body).toBe('')
+      expect(novo?.name).toContain('Boas-vindas')
+
+      // Com as quatro variantes, senão a mensagem nasce sem canal nenhum e o
+      // passo não envia por lugar algum.
+      const [variantes] = (await admin`
+        SELECT count(*)::int AS n FROM message_variants v
+        JOIN flow_steps s ON s.message_id = v.message_id
+        WHERE s.flow_id = ${FLUXO} AND s.position = 2`) as unknown as { n: number }[]
+      expect(variantes?.n).toBe(4)
+    })
+
+    it('a mensagem de outra banca não vira passo daqui', async () => {
+      // Mesmo buraco de `salvarPassoAction`: o id vem de um `<select>`, e a
+      // política de `flow_steps` olha o FLUXO, não a mensagem.
+      const r = await acrescentar({ messageId: MSG_OUTRA })
+
+      expect(r.erro).toBeTruthy()
+      expect(await posicoes()).toEqual([1])
+    })
+
+    it('remover o do meio renumera o resto, sem colidir no índice único', async () => {
+      const { removerPassoAction } = await import('@/app/(app)/fluxos/actions')
+
+      await acrescentar({ messageId: MSG_ALVO, atraso: '1h' })
+      await acrescentar({ messageId: MSG_ALVO, atraso: '1h' })
+      expect(await posicoes()).toEqual([1, 2, 3])
+
+      const [doMeio] = await admin<{ id: string }[]>`
+        SELECT id FROM flow_steps WHERE flow_id = ${FLUXO} AND position = 2`
+
+      const form = new FormData()
+      form.append('flowId', FLUXO)
+      form.append('stepId', doMeio!.id)
+      await removerPassoAction({}, form)
+
+      // 1, 2 — e não 1, 3. Sem a renumeração, o próximo acrescentar tentaria a
+      // posição 3 sobre uma cadência de dois e o índice único recusaria.
+      expect(await posicoes()).toEqual([1, 2])
+
+      const r = await acrescentar({ messageId: MSG_ALVO })
+      expect(r.ok).toBe(true)
+      expect(await posicoes()).toEqual([1, 2, 3])
+    })
+
+    it('remover o passo NÃO apaga a mensagem', async () => {
+      const { removerPassoAction } = await import('@/app/(app)/fluxos/actions')
+
+      await acrescentar({ messageId: MSG_ALVO })
+      const [novo] = await admin<{ id: string }[]>`
+        SELECT id FROM flow_steps WHERE flow_id = ${FLUXO} AND position = 2`
+
+      const form = new FormData()
+      form.append('flowId', FLUXO)
+      form.append('stepId', novo!.id)
+      await removerPassoAction({}, form)
+
+      // O texto é trabalho de alguém e pode estar em outro fluxo. Tirar o passo
+      // da cadência não pode virar "perder o texto".
+      const [sobrou] = (await admin`
+        SELECT count(*)::int AS n FROM messages WHERE id = ${MSG_ALVO}`) as unknown as {
+        n: number
+      }[]
+      expect(sobrou?.n).toBe(1)
+    })
+  })
+
+  /*
+   * Editar o texto pela tela do fluxo escreve na MENSAGEM — não há cópia local.
+   * O teste existe para que isso continue verdade: no dia em que alguém
+   * introduzir um "texto do passo", a tela de Mensagens passaria a mostrar uma
+   * coisa e o cliente receberia outra.
+   */
+  it('editar o texto pelo fluxo altera a mensagem, e propaga às variantes sincronizadas', async () => {
+    const { salvarTextoDoPassoAction } = await import('@/app/(app)/fluxos/actions')
+
+    await admin`INSERT INTO message_variants (message_id, channel, synced, body) VALUES
+      (${MSG_MINHA}, 'whatsapp', true,  NULL),
+      (${MSG_MINHA}, 'sms',      false, 'versão curta à mão')`
+
+    const form = new FormData()
+    form.append('flowId', FLUXO)
+    form.append('messageId', MSG_MINHA)
+    form.append('corpo', 'Olá {{nome}}, texto novo!')
+
+    const r = await salvarTextoDoPassoAction({}, form)
+    expect(r.ok).toBe(true)
+
+    const [mensagem] = await admin<{ body: string }[]>`
+      SELECT body FROM messages WHERE id = ${MSG_MINHA}`
+    expect(mensagem?.body).toBe('Olá {{nome}}, texto novo!')
+
+    // A customizada não é sobrescrita (§6.1): quem escreveu uma versão de SMS à
+    // mão não a perde porque alguém mexeu no texto pela tela do fluxo.
+    const [sms] = await admin<{ body: string | null }[]>`
+      SELECT body FROM message_variants WHERE message_id = ${MSG_MINHA} AND channel = 'sms'`
+    expect(sms?.body).toBe('versão curta à mão')
+  })
+
   it('troca a mensagem do passo', async () => {
     const r = await ajustar({ atraso: '0', hora: '', messageId: MSG_ALVO })
 

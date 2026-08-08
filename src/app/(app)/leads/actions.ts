@@ -227,3 +227,67 @@ export async function mudarStatusAction(
   revalidatePath('/pipeline')
   return { ok: 'Atualizado.' }
 }
+
+/**
+ * Exclui o lead.
+ *
+ * POR QUE ISTO NÃO EXISTIA, E POR QUE PRECISA EXISTIR
+ *
+ * Leads nascem sozinhos, por regra (§9.3): um cadastro duplicado, um teste, uma
+ * importação errada e o funil ganha cartão que ninguém pediu. Havia como marcar
+ * "perdido" — que é outra coisa: perdido é um desfecho comercial, entra em
+ * relatório e conta como trabalho feito. Sujeira não é desfecho, é sujeira, e
+ * até aqui só saía do funil por SQL.
+ *
+ * O QUE SOME E O QUE FICA
+ *
+ * Some o CARTÃO: o lead e as anotações dele (cascata de `lead_activities`).
+ * Ficam o CONTATO, os eventos da plataforma e o histórico de mensagens — eles
+ * não são do lead, são da pessoa, e apagá-los junto destruiria o registro do
+ * que foi enviado a alguém (§14.1 manda guardar isso) além de esconder a
+ * conversa toda por causa de um cartão duplicado. Quem quer apagar a PESSOA usa
+ * o direito de exclusão em Configurações → Privacidade, que é o caminho da
+ * LGPD e apaga de verdade.
+ *
+ * SEM DESFAZER — e por isso a tela pede confirmação escrita antes de chamar.
+ */
+export async function excluirLeadAction(
+  _prev: LeadState,
+  formData: FormData,
+): Promise<LeadState> {
+  const user = await requireUser()
+  /*
+   * `leads.reatribuir` é a permissão de quem manda no funil (só admin, §9.4).
+   * Um consultor pode editar o próprio lead — mover de etapa, anotar, marcar
+   * perdido —, mas apagar o cartão faz o trabalho sumir do relatório de todo
+   * mundo, e essa não é uma decisão de quem toca um lead.
+   */
+  assertCan(user, 'leads.reatribuir')
+
+  const parsed = z
+    .object({ leadId: z.uuid() })
+    .safeParse({ leadId: formData.get('leadId') })
+
+  if (!parsed.success) return { erro: 'Dados inválidos.' }
+
+  const apagados = await withTenant(tenantOf(user), async (tx) => {
+    const linhas = await tx
+      .delete(leads)
+      .where(and(eq(leads.id, parsed.data.leadId), eq(leads.orgId, user.orgId)))
+      .returning({ id: leads.id })
+
+    return linhas.length
+  })
+
+  if (apagados === 0) {
+    // Zero linhas aqui é o RLS ou um id que já não existe — nos dois casos a
+    // resposta honesta é a mesma, e nenhuma delas revela lead de outra pessoa.
+    return { erro: 'Esse lead não existe mais, ou não é seu para excluir.' }
+  }
+
+  log.info('lead excluído', { leadId: parsed.data.leadId })
+
+  revalidatePath('/leads')
+  revalidatePath('/pipeline')
+  return { ok: 'Lead excluído.' }
+}

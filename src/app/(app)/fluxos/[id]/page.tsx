@@ -6,9 +6,12 @@ import { buscarFluxo } from '@/db/queries/flows'
 import { listarMensagens } from '@/db/queries/messages'
 import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, ChannelIcon } from '@/components/ui'
-import { CHANNEL_LABELS, CHANNELS } from '@/db/schema/enums'
+import { CHANNEL_LABELS, CHANNELS, type Channel } from '@/db/schema/enums'
+import { prontidaoDosCanais } from '@/lib/delivery/prontidao'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { alternarFluxoAction } from '../actions'
+import { descreverEvento } from '@/lib/vocabulario'
+import { AdicionarPasso } from './adicionar-passo'
 import { ConfigFluxo } from './config'
 import { EditarPasso } from './editar-passo'
 
@@ -22,13 +25,31 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
   // As duas na mesma transação: a lista de mensagens alimenta o seletor de cada
   // passo, e abrir uma segunda conexão para ela seria outra ida ao banco por
   // uma tela que já é `force-dynamic`.
-  const { completo, mensagens } = await withTenant(tenantOf(user), async (tx) => ({
+  const { completo, mensagens, prontidao } = await withTenant(tenantOf(user), async (tx) => ({
     completo: await buscarFluxo(tx, id),
     mensagens: await listarMensagens(tx),
+    /*
+     * A CONFIGURAÇÃO DOS CANAIS, AQUI, PORQUE AQUI NÃO HÁ NINGUÉM OLHANDO
+     * NA HORA DO ENVIO.
+     *
+     * Um disparo manual devolve o erro para quem clicou. Um fluxo dispara
+     * sozinho, de madrugada, a partir de um webhook — e se o canal não tiver
+     * conexão o envio é barrado sem gerar linha no histórico (é o que mantém a
+     * tela legível, ver `prontidao.ts`). O preço disso seria um fluxo mudo sem
+     * nada explicando, então o aviso mora onde a pessoa configura o fluxo.
+     */
+    prontidao: await prontidaoDosCanais(tx, user.orgId, CHANNELS),
   }))
   if (!completo) notFound()
 
   const { fluxo, passos, condicoesEntrada, ritmo } = completo
+
+  // Só os canais que ESTE fluxo usa: avisar sobre um SMS desconfigurado num
+  // fluxo que só manda WhatsApp seria ruído, e ruído ensina a ignorar aviso.
+  const usados = new Set<Channel>(passos.flatMap((p) => p.canais ?? []))
+  const semConexao = [...usados]
+    .map((canal) => prontidao.get(canal))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p) && !p!.pronto)
 
   /*
    * Só as ativas, e sem as que o próprio fluxo já usa não — usar a mesma
@@ -60,6 +81,31 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
       }
     >
       <div className="flex max-w-3xl flex-col gap-4">
+        {semConexao.length > 0 ? (
+          <Card>
+            <CardBody className="flex flex-col gap-1">
+              <p className="text-2xs font-medium text-fail">
+                {semConexao.length === 1
+                  ? 'Um canal deste fluxo não tem como enviar.'
+                  : `${semConexao.length} canais deste fluxo não têm como enviar.`}
+              </p>
+              {semConexao.map((canal) => (
+                <p key={canal.canal} className="text-2xs text-ink-2">
+                  <span className="text-ink">{CHANNEL_LABELS[canal.canal]}</span>: {canal.motivo}
+                </p>
+              ))}
+              <p className="text-2xs text-pending">
+                Enquanto estiver assim, o fluxo dispara e esse canal fica de fora — sem linha no
+                histórico, porque o problema é da configuração e não de cada contato.{' '}
+                <Link href="/canais" className="text-ink underline underline-offset-2">
+                  Abrir Canais
+                </Link>
+                .
+              </p>
+            </CardBody>
+          </Card>
+        ) : null}
+
         {!fluxo.active ? (
           <Card>
             <CardBody>
@@ -77,8 +123,18 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
             <CardTitle>Quando roda</CardTitle>
           </CardHeader>
           <CardBody className="flex flex-col gap-2">
+            {/*
+              O NOME DO EVENTO, E NÃO O CÓDIGO DELE.
+
+              "Dispara em user.created" obriga quem lê a saber o dicionário
+              interno do sistema para responder à pergunta mais simples desta
+              tela: quando isto acontece? O código continua visível ao lado, em
+              cinza, porque é ele que aparece no mapeamento da plataforma e no
+              histórico — mas deixa de ser a resposta principal (§11.7).
+            */}
             <p className="text-2xs text-ink-2">
-              Dispara em <code className="font-mono text-ink">{fluxo.triggerEvent}</code>
+              Dispara <span className="text-ink">{descreverEvento(fluxo.triggerEvent).nome.toLocaleLowerCase('pt-BR')}</span>{' '}
+              <span className="font-mono text-pending">({fluxo.triggerEvent})</span>
               {ritmo ? (
                 <>
                   {' '}
@@ -96,11 +152,13 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
 
             {fluxo.cancelOn.length > 0 ? (
               <p className="text-2xs text-ink-2">
-                Para sozinho em{' '}
+                Para sozinho quando{' '}
                 {fluxo.cancelOn.map((evento, i) => (
                   <span key={evento}>
                     {i > 0 ? ' ou ' : ''}
-                    <code className="font-mono text-ink">{evento}</code>
+                    <span className="text-ink" title={evento}>
+                      {descreverEvento(evento).nome.toLocaleLowerCase('pt-BR')}
+                    </span>
                   </span>
                 ))}
                 . Tudo que ainda não saiu é cancelado no mesmo instante.
@@ -160,7 +218,23 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
                         </Link>
                         {passo.messageAtiva ? null : <Badge tone="fail">pausada</Badge>}
                       </div>
-                      <p className="truncate font-mono text-2xs text-pending">{passo.messageKey}</p>
+                      {/*
+                        A CHAVE SAIU DAQUI.
+
+                        `boas_vindas` e `reativacao_7d` embaixo do nome não
+                        acrescentavam nada a quem lê "Boas-vindas" e "Reativação
+                        — 7 dias" logo acima: eram o mesmo dado, escrito no
+                        idioma do banco. Quem precisa da chave — a API pública, o
+                        mapeamento — encontra na tela da mensagem. No lugar dela
+                        entra o que a linha não dizia: se este texto é usado em
+                        mais lugares, que é o que muda o efeito de editá-lo.
+                      */}
+                      {passo.usadaEmOutrosPassos > 0 ? (
+                        <p className="truncate text-2xs text-pending">
+                          também usada em mais {passo.usadaEmOutrosPassos}{' '}
+                          {passo.usadaEmOutrosPassos === 1 ? 'passo' : 'passos'}
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -189,6 +263,9 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
                       delaySeconds={passo.delaySeconds}
                       sendAtLocal={passo.sendAtLocal}
                       messageId={passo.messageId}
+                      messageName={passo.messageName}
+                      messageBody={passo.messageBody}
+                      usadaEmOutrosPassos={passo.usadaEmOutrosPassos}
                       position={passo.position}
                       opcoes={opcoes}
                     />
@@ -219,6 +296,10 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
                 permite cancelar todos de uma vez.
               </p>
             ) : null}
+
+            <div className="mt-1">
+              <AdicionarPasso flowId={fluxo.id} opcoes={opcoes} />
+            </div>
           </CardBody>
         </Card>
       </div>

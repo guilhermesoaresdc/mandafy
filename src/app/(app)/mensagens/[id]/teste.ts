@@ -225,6 +225,13 @@ function descrever(
       return 'reagendado para a abertura da janela de silêncio'
     case 'pulado':
       return MOTIVO_LABELS[r.motivo as MotivoSkip] ?? (r.motivo ?? 'pulado')
+    /*
+     * Configuração, não contato. A frase já vem pronta de `resolverCanal` —
+     * "nenhum número de WhatsApp conectado", "falta a chave do provedor de
+     * SMS" — e é ela que diz o que fazer. Nada foi gravado no histórico.
+     */
+    case 'barrado':
+      return `${r.motivo ?? 'canal não configurado'} — ajuste em Canais`
     default:
       return r.motivo === 'variavel_ausente'
         ? 'faltou valor para uma variável'

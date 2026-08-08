@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useId, useMemo, useState } from 'react'
+import { useActionState, useEffect, useId, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Badge,
@@ -20,9 +20,11 @@ import {
   MESSAGE_CATEGORY_LABELS,
   type Channel,
 } from '@/db/schema/enums'
+import { SeletorDeVariaveis, inserirNoCursor } from '@/components/mensagens/variaveis'
+import { nomeDoCampo } from '@/lib/vocabulario'
 import { analisar } from '@/lib/messages/analise'
 import { compilar, variaveisDoCorpo } from '@/lib/messages/compile'
-import { CONTATO_EXEMPLO, VARIAVEIS_DISPONIVEIS } from '@/lib/messages/exemplo'
+import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 import { amostras, contarCombinacoes, sementeDeTexto } from '@/lib/messages/spintax'
 import { corpoEfetivo } from '@/lib/messages/sync'
 import { cn } from '@/lib/utils'
@@ -97,6 +99,20 @@ export function EditorMensagem({
   const corpoId = useId()
   const nomeId = useId()
   const chaveId = useId()
+  const campoRef = useRef<HTMLTextAreaElement | null>(null)
+
+  /** Insere a variável onde o cursor parou, e devolve o foco ao texto. */
+  function inserirVariavel(trecho: string): void {
+    const { proximo, cursor } = inserirNoCursor(campoRef.current, trecho, corpo)
+    setCorpo(proximo)
+
+    requestAnimationFrame(() => {
+      const campo = campoRef.current
+      if (!campo) return
+      campo.focus()
+      campo.setSelectionRange(cursor, cursor)
+    })
+  }
 
   const porCanal = useMemo(
     () => new Map(variantes.map((v) => [v.channel, v])),
@@ -316,6 +332,7 @@ export function EditorMensagem({
                 </label>
                 <textarea
                   id={corpoId}
+                  ref={campoRef}
                   value={corpo}
                   onChange={(e) => setCorpo(e.target.value)}
                   rows={12}
@@ -383,21 +400,31 @@ export function EditorMensagem({
               <CardHeader>
                 <CardTitle>Variáveis</CardTitle>
               </CardHeader>
-              <CardBody className="flex flex-col gap-2">
+              <CardBody className="flex flex-col gap-3">
+                {/*
+                  O QUE ESTÁ NO TEXTO, PELO NOME.
+
+                  Antes esta lista mostrava `valor_cents`, `fecha_em`,
+                  `retorno_cents` — o identificador do banco. Quem escreve a
+                  mensagem é quem toca a banca, e para essa pessoa
+                  `retorno_cents` é um enigma cujo significado só existe no
+                  código-fonte. O código continua ali, em cinza, porque é ele
+                  que aparece no texto; o que muda é qual dos dois é a resposta.
+                */}
                 {usadas.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {usadas.map((v) => (
-                      <code
+                      <span
                         key={v}
+                        title={v}
                         className={cn(
-                          'rounded border px-1.5 py-0.5 font-mono text-2xs',
-                          v in CONTATO_EXEMPLO
-                            ? 'border-line text-ink-2'
-                            : 'border-fail text-fail',
+                          'inline-flex items-baseline gap-1 rounded border px-1.5 py-0.5 text-2xs',
+                          v in CONTATO_EXEMPLO ? 'border-line text-ink-2' : 'border-fail text-fail',
                         )}
                       >
-                        {v}
-                      </code>
+                        {nomeDoCampo(v)}
+                        <code className="font-mono text-pending">{v}</code>
+                      </span>
                     ))}
                   </div>
                 ) : (
@@ -412,23 +439,12 @@ export function EditorMensagem({
                 ) : null}
 
                 <Separator />
-                <details>
-                  <summary className="cursor-pointer text-2xs text-ink-2">
-                    Ver as disponíveis
-                  </summary>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {VARIAVEIS_DISPONIVEIS.map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setCorpo((atual) => `${atual}{{${v}}}`)}
-                        className="rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-ink-2 hover:border-ink hover:text-ink"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </details>
+
+                <SeletorDeVariaveis
+                  aoInserir={inserirVariavel}
+                  usadas={usadas}
+                  compacto
+                />
               </CardBody>
             </Card>
           </div>
