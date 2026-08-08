@@ -268,7 +268,9 @@ export function LogAoVivo({
                 onClick={() => alternarCanal(canal)}
                 aria-pressed={canais.has(canal)}
                 className={cn(
-                  'rounded border px-1.5 py-0.5 font-mono text-2xs transition-opacity',
+                  // py-2 no telefone: ligar e desligar canal é o filtro mais
+                  // usado desta tela, e 23px de altura é menos que um polegar.
+                  'rounded border px-2 py-2 font-mono text-2xs transition-opacity md:px-1.5 md:py-0.5',
                   canais.has(canal) ? 'border-line text-ink' : 'border-transparent text-pending opacity-40',
                 )}
                 style={

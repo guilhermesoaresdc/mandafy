@@ -104,11 +104,18 @@ export default async function LeadsPage({
           </CardBody>
         </Card>
 
-        {/* Filtros salvos (§9.1) */}
+        {/*
+          Filtros salvos (§9.1).
+
+          `py-2 md:py-1`: no computador o alvo é o ponteiro e 27px de altura
+          basta; no telefone é o polegar. Estes cinco atalhos são a navegação
+          principal desta tela, e errar o toque devolve a pessoa para a lista
+          inteira. A densidade do §11.1 vale para a mesa, não para o balcão.
+        */}
         <div className="flex flex-wrap gap-1">
           <Link
             href="/leads"
-            className={`rounded-lg border px-2.5 py-1 text-2xs ${
+            className={`rounded-lg border px-2.5 py-2 text-2xs md:py-1 ${
               chave ? 'border-line text-ink-2' : 'border-ink text-ink'
             }`}
           >
@@ -118,7 +125,7 @@ export default async function LeadsPage({
             <Link
               key={f.chave}
               href={`/leads?filtro=${f.chave}`}
-              className={`rounded-lg border px-2.5 py-1 text-2xs ${
+              className={`rounded-lg border px-2.5 py-2 text-2xs md:py-1 ${
                 chave === f.chave ? 'border-ink text-ink' : 'border-line text-ink-2'
               }`}
             >

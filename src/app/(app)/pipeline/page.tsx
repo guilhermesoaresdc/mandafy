@@ -41,8 +41,18 @@ export default async function PipelinePage() {
     <SessionFrame
       title="Pipeline"
       description={
+        /*
+          A instrução era "Arraste para mover de etapa" — e no celular arrastar
+          não move nada. O `draggable` do HTML não nasce de um toque: nem o
+          Safari do iPhone nem o Chrome do Android disparam `dragstart` por
+          gesto, e não há remendo de CSS que conserte isso.
+          O caminho que funciona nos dois lugares é o seletor de etapa dentro
+          de cada cartão, que já existia — mas nada na tela dizia isso, e quem
+          abria no telefone ficava tentando o gesto que a própria tela mandou
+          fazer. §11.7: nomear pelo que a pessoa controla.
+        */
         user.isAdmin
-          ? 'Arraste para mover de etapa. O cartão move na hora; o servidor confirma depois.'
+          ? 'Cada cartão tem um seletor de etapa — e no computador dá para arrastar. O cartão move na hora; o servidor confirma depois.'
           : 'Os seus leads, por etapa.'
       }
     >
