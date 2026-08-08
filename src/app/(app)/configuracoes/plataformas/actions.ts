@@ -9,6 +9,7 @@ import { nomeDoEvento } from '@/lib/ingest/mapping'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { mappingSchema, MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
+import { CANONICAL_EVENTS } from '@/db/schema/enums'
 import { generateIngestToken } from '@/lib/ingest/signature'
 import { createLogger } from '@/lib/logger'
 
@@ -236,4 +237,96 @@ export async function ultimoPayload(sourceId: string): Promise<UltimoEvento | nu
       nome: nomeDoEvento(linha.payload),
     }
   })
+}
+
+/**
+ * Grava a tradução de um ou mais nomes de evento, sem passar pelo passo 3.
+ *
+ * POR QUE UM CAMINHO PRÓPRIO
+ *
+ * A tradução já existia no passo 3, e mesmo assim o aviso do topo mandava a
+ * pessoa "acrescentar cada um lá embaixo": rolar a página, achar a seção,
+ * clicar no botão, lembrar de salvar. Quatro passos para dizer "sim, é isso" a
+ * uma tradução que o sistema já sabia fazer — e cada passo é uma chance de
+ * parar no meio e deixar o evento morrendo em silêncio.
+ *
+ * Aqui a confirmação é um clique, no lugar onde o problema aparece.
+ *
+ * MESCLA, NUNCA SUBSTITUI. O `event_map` salvo é a autoridade sobre esta
+ * plataforma: um nome que já está lá não é tocado, porque pode ter sido
+ * ajustado à mão justamente por o padrão estar errado para esta banca.
+ */
+const traducaoSchema = z.object({
+  sourceId: z.uuid(),
+  /** `nome-da-plataforma=evento.canonico`, um por linha. */
+  pares: z.string().max(4_000),
+})
+
+export async function traduzirEventosAction(
+  _prev: PlataformaState,
+  formData: FormData,
+): Promise<PlataformaState> {
+  const user = await requireAdmin()
+  assertCan(user, 'integracoes.gerenciar')
+
+  const parsed = traducaoSchema.safeParse({
+    sourceId: formData.get('sourceId'),
+    pares: formData.get('pares') ?? '',
+  })
+  if (!parsed.success) return { error: 'Dados inválidos.' }
+
+  const novas: Record<string, string> = {}
+  for (const linha of parsed.data.pares.split('\n')) {
+    const [nome, canonico] = linha.split('=')
+    if (!nome?.trim() || !canonico?.trim()) continue
+
+    // Só evento canônico: o valor vem de um `<select>`, e um `<select>` é uma
+    // sugestão. Um destino inventado passaria a gravar um mapa que a validação
+    // do motor recusaria depois, longe daqui.
+    if (!(CANONICAL_EVENTS as readonly string[]).includes(canonico.trim())) continue
+    novas[nome.trim()] = canonico.trim()
+  }
+
+  if (Object.keys(novas).length === 0) return { error: 'Nada para traduzir.' }
+
+  try {
+    const problema = await withTenant(tenantOf(user), async (tx) => {
+      const [linha] = await tx
+        .select({ mapping: sources.mapping })
+        .from(sources)
+        .where(and(eq(sources.id, parsed.data.sourceId), eq(sources.orgId, user.orgId)))
+        .limit(1)
+
+      if (!linha) return 'Essa plataforma não existe aqui.'
+
+      const atual = mappingSchema.safeParse(linha.mapping ?? {})
+      if (!atual.success) return 'O mapeamento gravado está inválido — abra o passo 3 e salve.'
+
+      const mapa = {
+        ...atual.data,
+        // As novas primeiro: o que já estava salvo vence, e vence de propósito.
+        event_map: { ...novas, ...atual.data.event_map },
+      }
+
+      await tx
+        .update(sources)
+        .set({ mapping: mapa, updatedAt: new Date() })
+        .where(and(eq(sources.id, parsed.data.sourceId), eq(sources.orgId, user.orgId)))
+
+      return null
+    })
+
+    if (problema) return { error: problema }
+  } catch (error) {
+    log.error('falha ao traduzir eventos', {
+      reason: error instanceof Error ? error.message : 'desconhecido',
+    })
+    return { error: 'Não foi possível salvar a tradução. Tente de novo.' }
+  }
+
+  log.info('eventos traduzidos', { quantos: Object.keys(novas).length })
+
+  revalidatePath(`/configuracoes/plataformas/${parsed.data.sourceId}`)
+  revalidatePath('/painel')
+  return { ok: true }
 }

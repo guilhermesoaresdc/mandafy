@@ -3,6 +3,7 @@ import { CANONICAL_EVENTS, type CanonicalEvent } from '@/db/schema/enums'
 import { toE164 } from '@/lib/phone'
 import { getByPath } from './path'
 import { applyTransform, isTransformName, type TransformName } from './transforms'
+import { traducaoAutomatica } from './traduzir-evento'
 
 /**
  * Tradução declarativa de payload de plataforma → evento canônico (§4.2).
@@ -171,11 +172,32 @@ export function applyMapping(payload: unknown, rawMapping: unknown): MappingResu
 
   // O nome do evento na plataforma pode vir com caixa e espaços variados.
   const chave = bruto.trim()
-  const alvo =
+  const doMapa =
     mapping.event_map[chave] ??
     mapping.event_map[chave.toLowerCase()] ??
     // Se a plataforma já manda o nome canônico, aceita direto.
     (CANONICAL.has(chave) ? chave : undefined)
+
+  /*
+   * O DICIONÁRIO DE FÁBRICA COMO REDE, e não como regra.
+   *
+   * O mapa SALVO desta plataforma continua sendo a autoridade: se ele traduz o
+   * nome, é ele que vale, inclusive para contrariar o dicionário. A rede só
+   * pega o que ia cair no chão.
+   *
+   * E caía muito. `new-user`, `qrcode-created`, `payment-by-deposit` e
+   * `payment-by-game` são os quatro nomes da plataforma mais comum, estão no
+   * mapeamento sugerido desde sempre — e mesmo assim chegavam como
+   * `evento_nao_mapeado` em qualquer conexão criada antes daquele catálogo, ou
+   * cujo passo 3 tivesse sido salvo sem eles. O efeito é o pior tipo de
+   * silêncio: o cadastro chega, o fluxo está ligado, a mensagem existe, e não
+   * sai nada — sem erro em tela nenhuma além de uma linha "não aproveitado".
+   *
+   * Só nome CONHECIDO entra aqui (`traducaoAutomatica`). Palpite por
+   * palavra-chave fica fora de propósito: ele vai para a tela pedir confirmação,
+   * porque mandar a mensagem errada é pior que não mandar.
+   */
+  const alvo = doMapa ?? traducaoAutomatica(chave) ?? undefined
 
   if (!alvo || !CANONICAL.has(alvo)) {
     return {

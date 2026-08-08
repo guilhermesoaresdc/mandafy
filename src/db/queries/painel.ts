@@ -39,6 +39,15 @@ export type MetricasPainel = {
   /** Os mesmos três ontem, para a comparação. */
   compradoOntemCents: number
   cadastrosOntem: number
+  /**
+   * Quanto a banca PAGOU em prêmio hoje.
+   *
+   * Sem ele, o painel mostrava só o dinheiro entrando — e faturamento sem o
+   * prêmio ao lado não diz como foi o dia. Um dia de R$ 3 mil vendidos com R$ 5
+   * mil premiados é um prejuízo que a tela apresentava como recorde.
+   */
+  premiadoHojeCents: number
+  premiosHoje: number
 }
 
 /** O que conta como "saiu" para a taxa de entrega. */
@@ -148,6 +157,8 @@ async function movimentoDoDia(
   cadastrosHoje: number
   compradoOntemCents: number
   cadastrosOntem: number
+  premiadoHojeCents: number
+  premiosHoje: number
 }> {
   const desde = new Date(agora.getTime() - 48 * 3600 * 1000).toISOString()
 
@@ -156,15 +167,26 @@ async function movimentoDoDia(
     pagos: number
     valor: string | number | null
     cadastros: number
+    premios: number
+    premiado: string | number | null
   }>(sql`
     SELECT
       (occurred_at AT TIME ZONE ${FUSO_OPERACAO})::date::text AS dia,
       count(*) FILTER (WHERE type = 'order.paid')::int AS pagos,
       COALESCE(SUM((data ->> 'valor_cents')::bigint) FILTER (WHERE type = 'order.paid'), 0) AS valor,
-      count(*) FILTER (WHERE type = 'user.created')::int AS cadastros
+      count(*) FILTER (WHERE type = 'user.created')::int AS cadastros,
+      count(*) FILTER (WHERE type = 'ticket.awarded')::int AS premios,
+      -- O prêmio pode chegar em retorno_cents (quanto a aposta paga) ou em
+      -- valor_cents (quanto foi creditado): depende de como a plataforma nomeia
+      -- no evento de premiação. O COALESCE aceita os dois, na ordem em que o
+      -- mapeamento sugerido os coloca. Sem isso, metade das bancas veria
+      -- "R$ 0,00 em prêmios" com o dinheiro tendo saído.
+      COALESCE(SUM(
+        COALESCE((data ->> 'retorno_cents')::bigint, (data ->> 'valor_cents')::bigint)
+      ) FILTER (WHERE type = 'ticket.awarded'), 0) AS premiado
     FROM events
     WHERE occurred_at >= ${desde}::timestamptz
-      AND type IN ('order.paid', 'user.created')
+      AND type IN ('order.paid', 'user.created', 'ticket.awarded')
     GROUP BY 1
   `)
 
@@ -178,6 +200,8 @@ async function movimentoDoDia(
     cadastrosHoje: doDia(hoje)?.cadastros ?? 0,
     compradoOntemCents: Number(doDia(ontem)?.valor ?? 0),
     cadastrosOntem: doDia(ontem)?.cadastros ?? 0,
+    premiadoHojeCents: Number(doDia(hoje)?.premiado ?? 0),
+    premiosHoje: doDia(hoje)?.premios ?? 0,
   }
 }
 

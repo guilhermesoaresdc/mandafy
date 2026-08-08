@@ -46,10 +46,13 @@ export const dynamic = 'force-dynamic'
  * nenhuma.
  *
  * Agora a página desce em ordem de urgência:
- *   1. o dinheiro e a gente — compras, cadastros, recuperado;
+ *   1. O DIA — comprado, prêmios pagos, saldo, cadastros, recuperado, ticket
+ *      médio, mensagens enviadas e taxa de entrega, no mesmo bloco. Os números
+ *      de envio moram aqui porque são do mesmo dia que o faturamento ao lado, e
+ *      é lê-los juntos que liga uma queda de venda a uma queda de entrega;
  *   2. o que está prestes a acontecer — barra de pulso e alertas;
  *   3. as curvas — para onde a coisa está indo;
- *   4. a saúde do motor — canais, fila, falhas;
+ *   4. o detalhe do motor — próximos envios e saúde por canal;
  *   5. o diagnóstico de configuração — "o que está no ar", no fim.
  *
  * O item 5 não perdeu importância: ele é a peça que pega a falha mais cara
@@ -116,14 +119,39 @@ export default async function PainelPage() {
   return (
     <SessionFrame title="Painel" description={`Operação de ${user.orgName}`}>
       <div className="flex flex-col gap-4">
-        {/* ── 1. O dinheiro e a gente ── */}
+        {/* ── 1. O dia inteiro num bloco só ── */}
         <Card>
+          <CardHeader>
+            <CardTitle>Hoje</CardTitle>
+            <span className="text-2xs text-pending">do 00h de Brasília até agora</span>
+          </CardHeader>
           <CardBody className="grid grid-cols-2 gap-6 md:grid-cols-4">
             <Stat
-              label="Comprado hoje"
+              label="Comprado"
               value={formatBRL(metricas.compradoHojeCents)}
               hint={`${formatNumber(metricas.comprasHoje)} aposta(s) paga(s) · ${vendas.texto}`}
               tone={vendas.tom === 'neutral' ? 'neutral' : vendas.tom}
+            />
+            {/*
+              O PRÊMIO AO LADO DO FATURAMENTO, e não numa aba adiante.
+
+              Faturamento sozinho não diz como foi o dia: R$ 3 mil vendidos com
+              R$ 5 mil premiados é prejuízo, e a tela mostrava isso como recorde.
+              Os dois juntos, com o saldo embaixo, é a leitura de uma olhada.
+            */}
+            <Stat
+              label="Prêmios pagos"
+              value={formatBRL(metricas.premiadoHojeCents)}
+              hint={`${formatNumber(metricas.premiosHoje)} aposta(s) premiada(s)`}
+              tone={metricas.premiadoHojeCents > metricas.compradoHojeCents ? 'fail' : 'neutral'}
+            />
+            <Stat
+              label="Saldo do dia"
+              value={formatBRL(metricas.compradoHojeCents - metricas.premiadoHojeCents)}
+              hint="comprado menos prêmios pagos"
+              tone={
+                metricas.compradoHojeCents - metricas.premiadoHojeCents < 0 ? 'fail' : 'neutral'
+              }
             />
             <Stat
               label="Cadastros novos"
@@ -144,6 +172,39 @@ export default async function PainelPage() {
                   : formatBRL(Math.round(metricas.compradoHojeCents / metricas.comprasHoje))
               }
               hint="por aposta paga hoje"
+            />
+
+            {/*
+              O MOTOR DE ENVIO SUBIU PARA CÁ.
+
+              Ele estava abaixo dos gráficos, e ali respondia tarde demais: são
+              os números que dizem se o que a banca combinou com o cliente
+              chegou. Enviadas e taxa de entrega são do mesmo dia que o
+              faturamento ao lado — lê-los juntos é o que liga uma queda de
+              venda a uma queda de entrega.
+            */}
+            <Stat
+              label="Mensagens enviadas"
+              value={formatNumber(metricas.enviadasHoje)}
+              hint={
+                metricas.naFila > 0 ? `${formatNumber(metricas.naFila)} ainda na fila` : 'fila vazia'
+              }
+            />
+            <Stat
+              label="Taxa de entrega"
+              value={metricas.taxaEntrega === null ? '—' : formatPercent(metricas.taxaEntrega)}
+              hint={
+                metricas.falhas24h > 0
+                  ? `${formatNumber(metricas.falhas24h)} falha(s) em 24h`
+                  : 'sem falhas em 24h'
+              }
+              tone={
+                metricas.falhas24h > 0
+                  ? 'fail'
+                  : metricas.taxaEntrega !== null && metricas.taxaEntrega < 0.8
+                    ? 'warn'
+                    : 'neutral'
+              }
             />
           </CardBody>
         </Card>
@@ -263,35 +324,7 @@ export default async function PainelPage() {
           </Card>
         </div>
 
-        {/* ── 4. A saúde do motor ── */}
-        <Card>
-          <CardHeader>
-            <CardTitle>O motor de envio</CardTitle>
-            <Link
-              href="/historico"
-              className="text-2xs text-ink-2 underline-offset-2 hover:underline"
-            >
-              abrir o histórico
-            </Link>
-          </CardHeader>
-          <CardBody className="grid grid-cols-2 gap-6 md:grid-cols-4">
-            <Stat label="Enviadas hoje" value={formatNumber(metricas.enviadasHoje)} />
-            <Stat
-              label="Taxa entrega"
-              value={metricas.taxaEntrega === null ? '—' : formatPercent(metricas.taxaEntrega)}
-              tone={
-                metricas.taxaEntrega !== null && metricas.taxaEntrega < 0.8 ? 'warn' : 'neutral'
-              }
-            />
-            <Stat label="Na fila" value={formatNumber(metricas.naFila)} />
-            <Stat
-              label="Falhas 24h"
-              value={formatNumber(metricas.falhas24h)}
-              tone={metricas.falhas24h > 0 ? 'fail' : 'neutral'}
-            />
-          </CardBody>
-        </Card>
-
+        {/* ── 4. O detalhe do motor ── */}
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>

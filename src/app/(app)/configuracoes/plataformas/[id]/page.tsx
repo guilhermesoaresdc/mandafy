@@ -11,6 +11,7 @@ import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { serverEnv } from '@/env'
 import { eventosRecebidos, ultimoPayload } from '../actions'
 import { MAPEAMENTO_SUGERIDO } from '@/lib/ingest/mapping'
+import { descreverEvento } from '@/lib/vocabulario'
 import { PassoEndereco } from './passo-endereco'
 import { UltimoEventoRecebido } from './ultimo-evento'
 import { EventosRecebidos } from './recebidos'
@@ -158,7 +159,7 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
               <span className="text-2xs text-pending">os {recebidosCrus.length} mais recentes</span>
             </CardHeader>
             <CardBody>
-              <EventosRecebidos eventos={recebidosCrus} fuso={user.timezone} />
+              <EventosRecebidos sourceId={plataforma.id} eventos={recebidosCrus} fuso={user.timezone} />
             </CardBody>
           </Card>
         ) : null}
@@ -186,7 +187,16 @@ export default async function PlataformaPage({ params }: { params: Promise<{ id:
 
                 return (
                   <div key={evento.type} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="min-w-44 font-mono text-2xs text-ink">{evento.type}</span>
+                    {/*
+                      O NOME, e o código em cinza ao lado. Esta lista responde
+                      "o que esta plataforma manda" — e `withdrawal.pending` não
+                      responde isso a quem toca a banca. O código continua
+                      visível porque é ele que aparece no gatilho do fluxo.
+                    */}
+                    <span className="min-w-44 text-2xs text-ink">
+                      {descreverEvento(evento.type).nome}
+                      <span className="ml-1.5 font-mono text-pending">{evento.type}</span>
+                    </span>
                     <span className="text-2xs text-pending">
                       {evento.total}× · último em{' '}
                       {evento.ultimo.toLocaleString('pt-BR', { timeZone: user.timezone })}

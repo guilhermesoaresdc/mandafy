@@ -1,5 +1,7 @@
 import { Badge } from '@/components/ui'
+import { traduzirNomeDeEvento } from '@/lib/ingest/traduzir-evento'
 import type { EventoRecebido } from '../actions'
+import { TraduzirEventos, type EventoParaTraduzir } from './traduzir-eventos'
 
 /**
  * O histórico do que chegou por este webhook.
@@ -35,15 +37,27 @@ function naoTraduzidos(eventos: EventoRecebido[]): Map<string, number> {
 }
 
 export function EventosRecebidos({
+  sourceId,
   eventos,
   fuso,
 }: {
+  sourceId: string
   eventos: EventoRecebido[]
   fuso: string
 }) {
   if (eventos.length === 0) return null
 
   const faltando = naoTraduzidos(eventos)
+
+  /*
+   * Cada nome que falta já vem com a leitura do Mandafy — o que ele acha que
+   * aquilo é. Antes a lista era só de códigos, e a instrução era mapear cada um
+   * à mão: pedir para traduzir um nome que a pessoa não entende.
+   */
+  const paraTraduzir: EventoParaTraduzir[] = [...faltando.entries()].map(([nome, vezes]) => {
+    const leitura = traduzirNomeDeEvento(nome)
+    return { nome, vezes, canonico: leitura.canonico, origem: leitura.origem }
+  })
 
   return (
     <div className="flex flex-col gap-3">
@@ -52,26 +66,8 @@ export function EventosRecebidos({
         depois: ela é a conclusão, e quem chega aqui está procurando o que
         fazer, não o que aconteceu.
       */}
-      {faltando.size > 0 ? (
-        <div className="rounded-lg border border-warn/40 px-3 py-2">
-          <p className="text-2xs text-warn">
-            {faltando.size === 1
-              ? 'Um nome de evento está chegando e não é traduzido:'
-              : `${faltando.size} nomes de evento estão chegando e não são traduzidos:`}
-          </p>
-          <ul className="mt-1.5 flex flex-col gap-0.5">
-            {[...faltando.entries()].map(([nome, vezes]) => (
-              <li key={nome} className="text-2xs text-ink-2">
-                <code className="font-mono text-ink">{nome}</code>
-                {vezes > 1 ? ` · ${vezes} vezes` : null}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-1.5 text-2xs text-ink-2">
-            Acrescente cada um no passo 3, em &ldquo;Quando chegar&rdquo;. Enquanto não estiverem
-            lá, esses eventos chegam e não disparam fluxo nenhum.
-          </p>
-        </div>
+      {paraTraduzir.length > 0 ? (
+        <TraduzirEventos sourceId={sourceId} eventos={paraTraduzir} />
       ) : null}
 
       <div className="overflow-hidden rounded-lg border border-line">
