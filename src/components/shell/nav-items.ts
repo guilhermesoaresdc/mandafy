@@ -29,8 +29,12 @@ export const SESSIONS: readonly SessionItem[] = [
   { href: '/mensagens', label: 'Mensagens', icon: 'mensagens', permission: 'mensagens.gerenciar' },
   { href: '/fluxos', label: 'Fluxos', icon: 'fluxos', permission: 'fluxos.gerenciar' },
   { href: '/historico', label: 'Histórico', icon: 'historico' },
+  /*
+    "Pipeline" saiu daqui: virou a vista de funil de Leads (`?vista=funil`).
+    Eram duas entradas de menu para a mesma lista de pessoas, e alternar entre
+    elas era a única forma de usar o que cada uma tinha de exclusivo.
+  */
   { href: '/leads', label: 'Leads', icon: 'leads' },
-  { href: '/pipeline', label: 'Pipeline', icon: 'pipeline' },
   { href: '/canais', label: 'Canais', icon: 'canais', permission: 'canais.gerenciar' },
   {
     href: '/configuracoes',

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { withTenant } from '@/db'
-import {
+import { etapasDoPipeline,
+  montarPipeline,
   consultoresAtivos,
   contarLeads,
   filtroSalvo,
@@ -18,6 +19,7 @@ import { can } from '@/lib/rbac'
 import { formatNumber } from '@/lib/utils'
 import Link from 'next/link'
 import { TabelaLeads, type LinhaLead } from './tabela'
+import { Kanban } from '../pipeline/kanban'
 
 export const metadata: Metadata = { title: 'Leads · Mandafy' }
 export const dynamic = 'force-dynamic'
@@ -38,16 +40,26 @@ function ehFiltroSalvo(valor: string | undefined): valor is FiltroSalvo {
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filtro?: string }>
+  searchParams: Promise<{ filtro?: string; vista?: string }>
 }) {
   const user = await requireUser()
-  const { filtro: chave } = await searchParams
+  const { filtro: chave, vista } = await searchParams
+  /*
+   * DUAS TELAS PARA A MESMA LISTA VIRAM UMA COM DUAS VISTAS.
+   *
+   * `/leads` e `/pipeline` mostravam os mesmos leads, cada uma fazendo o que a
+   * outra não fazia: a lista busca, exporta e dispara em lote; o funil mostra a
+   * etapa e deixa mover. Quem quisesse "mover os 200 que acabaram de receber"
+   * precisava das duas, alternando pelo menu. Um item de menu a menos, e a
+   * mesma pergunta deixa de ter dois lugares para ser feita.
+   */
+  const noFunil = vista === 'funil'
 
   // Consultor não vê os filtros de outra pessoa; o RLS já limita o resultado,
   // isto só define o recorte pedido.
   const filtro: FiltroLeads = ehFiltroSalvo(chave) ? filtroSalvo(chave, user.id) : {}
 
-  const { linhas, total, consultores, novos, mensagens } = await withTenant(
+  const { linhas, total, consultores, novos, mensagens, etapas, colunas } = await withTenant(
     tenantOf(user),
     async (tx) => ({
       linhas: await listarLeads(tx, { ...filtro, limite: LIMITE }),
@@ -63,6 +75,12 @@ export default async function LeadsPage({
       total: await contarLeads(tx, filtro),
       consultores: user.isAdmin ? await consultoresAtivos(tx, user.orgId) : [],
       novos: await novosLeads(tx),
+      // As etapas alimentam o seletor da ficha: mover de etapa é a ação mais
+      // comum do funil e era a que exigia sair da lista.
+      etapas: await etapasDoPipeline(tx),
+      // O funil só é montado quando é ele que vai aparecer: são mais consultas
+      // e nenhuma delas serve à lista.
+      colunas: noFunil ? await montarPipeline(tx) : null,
       mensagens: await listarMensagensParaDisparo(tx),
     }),
   )
@@ -72,6 +90,7 @@ export default async function LeadsPage({
     title: l.title,
     valueCents: l.valueCents,
     status: l.status,
+    stageId: l.stageId,
     stageName: l.stageName,
     stageColor: l.stageColor,
     ownerId: l.ownerId,
@@ -99,6 +118,28 @@ export default async function LeadsPage({
        */
       actions={
         <>
+          {/*
+            As duas vistas da mesma lista, lado a lado. Um item de menu a
+            menos, e a pergunta "quem são meus leads?" deixa de ter dois
+            lugares para ser feita.
+          */}
+          <div className="flex overflow-hidden rounded-lg border border-line">
+            {[
+              { rotulo: 'Lista', href: '/leads', ativo: !noFunil },
+              { rotulo: 'Funil', href: '/leads?vista=funil', ativo: noFunil },
+            ].map((v) => (
+              <Link
+                key={v.rotulo}
+                href={v.href}
+                className={`px-3 py-2 text-2xs font-medium md:py-1.5 ${
+                  v.ativo ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:text-ink'
+                }`}
+              >
+                {v.rotulo}
+              </Link>
+            ))}
+          </div>
+
           <Link
             href="/api/leads/csv"
             className="h-8 rounded-lg border border-line px-3 text-2xs leading-8 font-medium text-ink hover:bg-surface-2"
@@ -152,14 +193,37 @@ export default async function LeadsPage({
           ))}
         </div>
 
-        <TabelaLeads
-          linhas={paraTabela}
-          total={total}
-          consultores={consultores}
-          podeReatribuir={can(user, 'leads.reatribuir')}
-          mensagens={mensagens}
-          podeEnviar={can(user, 'mensagem.enviar_manual')}
-        />
+        {noFunil && colunas ? (
+          <Kanban
+            colunas={colunas.map((c) => ({
+              stageId: c.stageId,
+              name: c.name,
+              color: c.color,
+              isWon: c.isWon,
+              isLost: c.isLost,
+              total: c.total,
+              somaCents: c.somaCents,
+              cartoes: c.cartoes.map((cartao) => ({
+                id: cartao.id,
+                title: cartao.title,
+                valueCents: cartao.valueCents,
+                ownerName: cartao.ownerName,
+                contactName: cartao.contactName,
+                diasNaEtapa: cartao.diasNaEtapa,
+              })),
+            }))}
+          />
+        ) : (
+          <TabelaLeads
+            linhas={paraTabela}
+            total={total}
+            etapas={etapas.map((e) => ({ id: e.id, name: e.name }))}
+            consultores={consultores}
+            podeReatribuir={can(user, 'leads.reatribuir')}
+            mensagens={mensagens}
+            podeEnviar={can(user, 'mensagem.enviar_manual')}
+          />
+        )}
       </div>
     </SessionFrame>
   )

@@ -122,7 +122,7 @@ try {
 
   const get = (p) => fetch(`${BASE}${p}`, { headers: { cookie }, redirect: 'manual' })
 
-  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/leads/importar', '/pipeline', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/configuracoes/equipe', '/painel']) {
+  for (const rota of ['/mensagens', '/fluxos', '/canais', '/historico', '/leads', '/leads/importar', '/leads?vista=funil', '/configuracoes/plataformas', '/configuracoes/api', '/configuracoes/privacidade', '/configuracoes/sistema', '/configuracoes/equipe', '/painel']) {
     const r = await get(rota)
     const corpo = await r.text()
     const erro = corpo.includes('server-side exception') || corpo.includes('Application error')
