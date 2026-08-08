@@ -166,6 +166,27 @@ export type CartaoLead = {
  * TODOS os leads da etapa, não só dos cartões carregados — senão a soma da
  * coluna mudaria conforme a rolagem, o que seria pior que não mostrar.
  */
+/** Quanto tempo um lead fechado continua aparecendo na coluna dele. */
+const DIAS_DE_FECHADO_NO_FUNIL = 30
+
+/**
+ * Quem aparece no funil.
+ *
+ * As duas consultas filtravam `status = 'aberto'` — e as colunas "Ganho" e
+ * "Perdido" existem justamente para mostrar quem NÃO está aberto. O resultado
+ * era um funil onde as duas últimas colunas ficavam em "Vazio." para sempre, e
+ * o número que o dono abre o funil para ver — quanto fechou — não existia em
+ * lugar nenhum da tela.
+ *
+ * Aberto sempre entra; fechado entra por um mês. Sem o corte, um ano de vendas
+ * ganhas se acumularia numa coluna que ninguém rola até o fim, e a soma no
+ * cabeçalho dela deixaria de responder "como foi este mês".
+ */
+function noFunil(agora = new Date()) {
+  const corte = new Date(agora.getTime() - DIAS_DE_FECHADO_NO_FUNIL * 86_400_000)
+  return or(eq(leads.status, 'aberto'), gte(leads.stageChangedAt, corte))
+}
+
 export async function montarPipeline(
   tx: Tx,
   opcoes: { porColuna?: number; agora?: Date } = {},
@@ -196,7 +217,7 @@ export async function montarPipeline(
       soma: sql<number>`COALESCE(SUM(${leads.valueCents}), 0)::bigint`,
     })
     .from(leads)
-    .where(eq(leads.status, 'aberto'))
+    .where(noFunil())
     .groupBy(leads.stageId)
 
   const porEtapa = new Map(totais.map((t) => [t.stageId, t]))
@@ -215,7 +236,7 @@ export async function montarPipeline(
     .from(leads)
     .innerJoin(contacts, eq(contacts.id, leads.contactId))
     .leftJoin(users, eq(users.id, leads.ownerId))
-    .where(eq(leads.status, 'aberto'))
+    .where(noFunil())
     .orderBy(asc(leads.stageChangedAt))
     .limit(porColuna * etapas.length)
 
@@ -368,15 +389,22 @@ export function filtroSalvo(chave: FiltroSalvo, userId: string): FiltroLeads {
   }
 }
 
-/** Leads com ação vencida — alimenta o aviso da tela. */
-export async function acoesVencidas(tx: Tx, agora = new Date()): Promise<number> {
-  const [linha] = await tx
-    .select({ total: count() })
-    .from(leads)
-    .where(and(eq(leads.status, 'aberto'), lte(leads.nextActionAt, agora)))
-
-  return linha?.total ?? 0
-}
+/*
+ * `acoesVencidas` SAIU DAQUI, e a coluna `next_action_at` continua no banco.
+ *
+ * Ela contava leads cuja próxima ação venceu — e nada no sistema jamais gravou
+ * essa data. Toda escrita de `leads` no `src/` mexe em etapa, dono, status,
+ * valor ou nota; `next_action_at` só era LIDA. O Stat "Ação vencida" marcava
+ * zero desde o primeiro dia e ia marcar zero para sempre, anunciando um
+ * lembrete que o sistema não tem.
+ *
+ * Um número que não pode mudar é pior que um número ausente: ele ocupa espaço
+ * na tela, convida a confiar, e ensina que os outros números ao lado talvez
+ * também não signifiquem nada.
+ *
+ * A coluna e o índice ficam. No dia em que houver como marcar "falar com esta
+ * pessoa na terça", a consulta volta em três linhas — e aí ela vai contar algo.
+ */
 
 /** Leads criados nos últimos N dias — o número do topo da tela. */
 export async function novosLeads(tx: Tx, dias = 7, agora = new Date()): Promise<number> {

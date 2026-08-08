@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { withTenant } from '@/db'
 import {
-  acoesVencidas,
   consultoresAtivos,
   contarLeads,
   filtroSalvo,
@@ -39,13 +38,12 @@ export default async function LeadsPage({
   // isto só define o recorte pedido.
   const filtro: FiltroLeads = ehFiltroSalvo(chave) ? filtroSalvo(chave, user.id) : { limite: 1000 }
 
-  const { linhas, total, consultores, vencidas, novos, mensagens } = await withTenant(
+  const { linhas, total, consultores, novos, mensagens } = await withTenant(
     tenantOf(user),
     async (tx) => ({
       linhas: await listarLeads(tx, { ...filtro, limite: 1000 }),
       total: await contarLeads(tx),
       consultores: user.isAdmin ? await consultoresAtivos(tx, user.orgId) : [],
-      vencidas: await acoesVencidas(tx),
       novos: await novosLeads(tx),
       mensagens: await listarMensagensParaDisparo(tx),
     }),
@@ -103,7 +101,6 @@ export default async function LeadsPage({
           <CardBody className="grid grid-cols-3 gap-6">
             <Stat label="Leads" value={formatNumber(total)} />
             <Stat label="Novos (7 dias)" value={formatNumber(novos)} />
-            <Stat label="Ação vencida" value={formatNumber(vencidas)} />
           </CardBody>
         </Card>
 

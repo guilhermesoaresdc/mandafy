@@ -90,7 +90,6 @@ export function FichaDoLead({
         />
         <Linha rotulo="Entrou por" valor={lead.source} />
         <Linha rotulo="Último evento" valor={porExtenso(lead.lastEventAt)} />
-        <Linha rotulo="Próxima ação" valor={porExtenso(lead.nextActionAt)} />
       </dl>
 
       <p className="mt-3 text-2xs text-pending">

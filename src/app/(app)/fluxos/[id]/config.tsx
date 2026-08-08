@@ -47,7 +47,20 @@ export function ConfigFluxo({
       <CardBody>
         <form action={salvar} className="flex flex-col gap-3">
           <input type="hidden" name="id" value={id} />
-          {janelaLigada ? <input type="hidden" name="janelaLigada" value="on" /> : null}
+          {/*
+            AQUI HAVIA UM CAMPO ESCONDIDO `janelaLigada`, e ele era uma trava de
+            sentido único.
+
+            Ele era emitido sempre que a janela já estava ligada, ANTES do
+            checkbox de mesmo nome lá embaixo. `formData.get()` devolve o
+            PRIMEIRO valor: desmarcar a caixa e salvar mandava `"on"` do mesmo
+            jeito, o servidor gravava "ligada" e a tela respondia "Salvo." em
+            verde. Dava para ligar a janela de silêncio e nunca mais desligar.
+
+            Checkbox desmarcado simplesmente não vai no FormData, e
+            `formData.get('janelaLigada') === 'on'` já lê isso como `false` —
+            que era o comportamento pretendido desde o começo.
+          */}
 
           <Field label="Nome do fluxo" htmlFor={nomeId}>
             <Input id={nomeId} name="nome" defaultValue={nome} maxLength={80} required />

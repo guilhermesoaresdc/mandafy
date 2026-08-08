@@ -120,9 +120,22 @@ function CorpoDaJanela({
   opcoes: { id: string; nome: string; chave: string }[]
   aoFechar: () => void
 }) {
+  /*
+   * O texto do campo é uma APROXIMAÇÃO do número gravado, e por isso ele não
+   * pode ser a fonte do que se salva.
+   *
+   * `formatarOffset(5700)` devolve "1.6 h", e `lerAtraso("1.6h")` devolve 5760.
+   * Abrir um passo de 1h35 e salvar sem tocar em nada o transformava em 1h36 —
+   * e de novo no próximo salvamento. A cadência derivava sozinha, um minuto por
+   * visita, sem ninguém ter editado nada.
+   *
+   * `mexeuNoTempo` separa "o campo tem um texto" de "a pessoa mudou o tempo".
+   * Enquanto ela não mudar, vale o número exato que está no banco.
+   */
   const [texto, setTexto] = useState(() =>
     delaySeconds === 0 ? '0' : formatarOffset(delaySeconds).replace('+', '').replace(/\s/g, ''),
   )
+  const [mexeuNoTempo, setMexeuNoTempo] = useState(false)
   const [hora, setHora] = useState(sendAtLocal ?? '')
   const [corpo, setCorpo] = useState(messageBody)
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false)
@@ -269,11 +282,21 @@ function CorpoDaJanela({
                 {position === 1 ? 'Depois do gatilho' : 'Depois do passo anterior'}
               </label>
               <div className="flex items-center gap-2">
+                {/*
+                  O número exato vai escondido enquanto ninguém editar o campo;
+                  a partir da primeira tecla, quem manda é o texto.
+                */}
+                {mexeuNoTempo ? null : (
+                  <input type="hidden" name="atrasoSegundos" value={delaySeconds} />
+                )}
                 <Input
                   id={campoId}
                   name="atraso"
                   value={texto}
-                  onChange={(e) => setTexto(e.target.value)}
+                  onChange={(e) => {
+                    setMexeuNoTempo(true)
+                    setTexto(e.target.value)
+                  }}
                   maxLength={20}
                   placeholder="5min"
                   className="w-24 font-mono"
