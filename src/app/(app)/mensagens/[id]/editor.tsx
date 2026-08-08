@@ -317,8 +317,19 @@ export function EditorMensagem({
       */}
 
       {/* ── Corpo + prévia ── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-          <div className="flex flex-col gap-3">
+      {/*
+        `min-w-0` nas duas colunas, e `minmax(0,1fr)` na trilha.
+
+        Abaixo de `lg` a grade tem uma coluna só, de tamanho `auto` — e o
+        mínimo de uma trilha `auto` é o min-content dos itens, não zero. O item
+        de grade também nasce com `min-width: auto`. Resultado: quem tivesse um
+        filho que se recusasse a encolher (aqui, a caixa de texto) empurrava a
+        coluna para além da tela, e o painel do quadro virava um rolador
+        horizontal de 221px. O cartão "O texto" ficava mais largo que o
+        aparelho e o texto era cortado no meio da palavra.
+      */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <div className="flex min-w-0 flex-col gap-3">
             <Card>
               <CardHeader>
                 <CardTitle>O texto</CardTitle>
@@ -599,7 +610,7 @@ function VarianteForm({
           duas caixas onde não cabe um assunto de e-mail.
         */}
         {canal === 'email' ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-3">
             <Field label="Assunto" htmlFor={assuntoId}>
               <Input
                 id={assuntoId}

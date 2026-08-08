@@ -103,7 +103,20 @@ export function SessionFrame({
         {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 md:px-6">{children}</div>
+      {/*
+        `data-painel="conteudo"` existe para o `npm run celular` achar esta
+        caixa por contrato, e não pela forma do HTML.
+
+        Ela é a que rola a página. `overflow-y-auto` faz o `overflow-x`
+        computar como `auto` junto, então quando algum bloco lá dentro se
+        recusa a encolher, ela passa a rolar de lado — e o medidor via um
+        ancestral rolável e dava por legítimo, como daria no kanban. A
+        diferença é de intenção: no kanban a faixa rola porque foi feita para
+        rolar; aqui rolar é o sintoma.
+      */}
+      <div data-painel="conteudo" className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 md:px-6">
+        {children}
+      </div>
     </main>
   )
 }

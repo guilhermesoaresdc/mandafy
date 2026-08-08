@@ -46,16 +46,27 @@ const APARELHO = { largura: 375, altura: 812 }
 /** 90%: sobra folga para uma borda ou um respiro, e não para uma coluna. */
 const FRACAO_MINIMA_DA_TELA = 0.9
 
+/**
+ * O iPhone aumenta o zoom sozinho quando o campo tem letra menor que 16px, e
+ * NÃO volta ao sair. Um toque na busca de leads deixa a tela ampliada e torta
+ * até a pessoa fechar o app. É a regra do Safari desde sempre, e a interface
+ * inteira usa `text-xs` (12px) nos campos.
+ */
+const MINIMO_PARA_NAO_DAR_ZOOM = 16
+
 const ROTAS = [
   '/painel',
   '/mensagens',
   '/fluxos',
   '/historico',
   '/leads',
+  '/leads/importar',
   '/pipeline',
   '/canais',
   '/configuracoes/plataformas',
   '/configuracoes/sistema',
+  '/configuracoes/api',
+  '/configuracoes/equipe',
 ]
 
 const env = {
@@ -250,6 +261,25 @@ try {
     INSERT INTO sessions (id, user_id, expires_at)
     VALUES (${createHash('sha256').update(token).digest('hex')}, ${usuario.id}, now() + interval '1 hour')`
 
+  /*
+   * As telas de DENTRO, que são as que têm formulário.
+   *
+   * As listas cabiam e as fichas não: o editor de mensagem estourava a
+   * direita e cortava o texto no meio. Medir só o índice de cada seção deixava
+   * de fora justamente as telas onde se trabalha. Os ids saem do banco porque
+   * a rota é `/mensagens/[id]` — sem um id de verdade não há o que medir.
+   */
+  const [mensagem] = await db`SELECT id FROM messages LIMIT 1`
+  const [fluxo] = await db`SELECT id FROM flows LIMIT 1`
+  const [lead] = await db`SELECT id FROM leads LIMIT 1`
+
+  const rotas = [
+    ...ROTAS,
+    mensagem && `/mensagens/${mensagem.id}`,
+    fluxo && `/fluxos/${fluxo.id}`,
+    lead && `/leads/${lead.id}`,
+  ].filter(Boolean)
+
   perfil = mkdtempSync(join(tmpdir(), 'mandafy-celular-'))
   navegador = spawn(
     binario,
@@ -342,7 +372,7 @@ try {
 
   // ─── as telas ─────────────────────────────────────────────────────────────
 
-  for (const rota of ROTAS) {
+  for (const rota of rotas) {
     await ir(rota)
 
     const medida = await avaliar(`(() => {
@@ -416,14 +446,51 @@ try {
       const andou = Math.round(Math.abs(window.scrollX - antes))
       window.scrollTo(antes, window.scrollY)
 
+      /*
+       * CAMPOS QUE FAZEM O IPHONE DAR ZOOM.
+       *
+       * Letra menor que 16px num campo editável e o Safari amplia a página
+       * assim que ele recebe o foco — e não desfaz ao sair. Quem toca na busca
+       * de leads fica com a tela ampliada e torta.
+       *
+       * \`select\` entra na conta; \`checkbox\` e \`radio\` não, porque não recebem
+       * texto e o Safari não amplia por causa deles.
+       */
+      const campos = [...document.querySelectorAll('input, textarea, select')]
+        .filter((el) => !['checkbox', 'radio', 'hidden', 'submit', 'button'].includes(el.type))
+        .filter((el) => el.getBoundingClientRect().width > 0)
+
+      const dandoZoom = campos
+        .map((el) => ({ el, px: parseFloat(getComputedStyle(el).fontSize) }))
+        .filter(({ px }) => px < ${MINIMO_PARA_NAO_DAR_ZOOM})
+        .slice(0, 3)
+        .map(({ el, px }) => nome(el).slice(0, 40) + ' (' + px + 'px)')
+
+      /*
+       * O PAINEL DE CONTEÚDO NÃO PODE ROLAR DE LADO.
+       *
+       * O editor de mensagem passou nos três cheques anteriores e mesmo assim
+       * cortava o texto: o cartão "O texto" era mais largo que a tela, e o
+       * painel — que tem \`overflow-x\` computado como \`auto\` por tabela do
+       * \`overflow-y-auto\` — virou um rolador horizontal. Para o cheque de
+       * "escondido sem aviso" havia um ancestral rolável, então passava.
+       *
+       * Rolador deliberado (o kanban) mora mais fundo e continua valendo. O
+       * painel, não: se ELE rola de lado, algum bloco se recusou a encolher.
+       */
+      const painel = document.querySelector('[data-painel="conteudo"]')
+
       return {
         caminho: location.pathname,
         andou,
+        painelRola: painel ? Math.max(0, painel.scrollWidth - painel.clientWidth) : 0,
         scroll: doc.scrollWidth,
         tela: doc.clientWidth,
         principal: main ? Math.round(main.getBoundingClientRect().width) : 0,
+        campos: campos.length,
         vazando,
         inalcancavel,
+        dandoZoom,
       }
     })()`)
 
@@ -475,6 +542,23 @@ try {
       medida.inalcancavel.length === 0,
       medida.inalcancavel.join(' · '),
     )
+
+    checar(
+      `${rota} cabe no painel`,
+      medida.painelRola <= 1,
+      medida.painelRola > 1
+        ? `sobram ${medida.painelRola}px para o lado · ${medida.vazando.join(' · ') || 'sem culpado óbvio'}`
+        : '',
+    )
+
+    // Telas sem campo nenhum não têm o que provar aqui.
+    if (medida.campos > 0) {
+      checar(
+        `${rota} não faz o iPhone dar zoom`,
+        medida.dandoZoom.length === 0,
+        medida.dandoZoom.join(' · '),
+      )
+    }
   }
 
   // ─── a gaveta ─────────────────────────────────────────────────────────────
@@ -540,6 +624,73 @@ try {
       checar('a gaveta fecha ao navegar', fechou, fechou ? '' : 'continuou aberta')
     }
   }
+
+  // ─── as janelas ───────────────────────────────────────────────────────────
+
+  /*
+   * O detalhe do envio e a ficha do lead só existem depois de um toque, então
+   * nenhuma passagem pelas rotas as alcança. São as duas telas onde se decide
+   * o que fazer com uma pessoa — reenviar, mudar de etapa — e o primitivo
+   * `Modal` promete subir do rodapé no celular. Aqui isso deixa de ser promessa.
+   */
+  async function janelaCabe(rota, gatilho, rotulo) {
+    await ir(rota)
+
+    let abriu = false
+    for (let i = 0; i < 20 && !abriu; i += 1) {
+      const achou = await avaliar(`(() => {
+        const alvo = document.querySelector(${JSON.stringify(gatilho)})
+        if (!alvo) return false
+        alvo.click()
+        return true
+      })()`)
+      if (!achou) {
+        checar(`${rotulo} abre`, false, `nada casa com ${gatilho}`)
+        return
+      }
+      await espera(300)
+      abriu = await avaliar(`!!document.querySelector('[role="dialog"]')`)
+    }
+
+    if (!abriu) {
+      checar(`${rotulo} abre`, false, 'o toque não abriu nada')
+      return
+    }
+
+    const medida = await avaliar(`(() => {
+      const d = document.querySelector('[role="dialog"]')
+      const r = d.getBoundingClientRect()
+      const tela = document.documentElement.clientWidth
+      return {
+        esquerda: Math.round(r.left),
+        direita: Math.round(r.right),
+        altura: Math.round(r.height),
+        tela,
+        alturaTela: document.documentElement.clientHeight,
+        rolaDeLado: Math.max(0, d.scrollWidth - d.clientWidth),
+      }
+    })()`)
+
+    checar(
+      `${rotulo} cabe na largura`,
+      medida.esquerda >= -1 && medida.direita <= medida.tela + 1 && medida.rolaDeLado <= 1,
+      `da esquerda ${medida.esquerda}px à direita ${medida.direita}px numa tela de ${medida.tela}px` +
+        (medida.rolaDeLado > 1 ? ` · rola ${medida.rolaDeLado}px de lado` : ''),
+    )
+
+    // Uma janela mais alta que a tela empurra os botões de ação para fora, e
+    // são eles que fazem a janela valer a pena.
+    checar(
+      `${rotulo} não passa da altura da tela`,
+      medida.altura <= medida.alturaTela + 1,
+      medida.altura > medida.alturaTela + 1
+        ? `${medida.altura}px numa tela de ${medida.alturaTela}px`
+        : '',
+    )
+  }
+
+  await janelaCabe('/historico', 'main ul li button', 'o detalhe do envio')
+  if (lead) await janelaCabe('/leads', 'main [style*="translateY"] button', 'a ficha do lead')
 
   console.log(falhas === 0 ? '\nTudo coube.' : `\n${falhas} problema(s) no celular.`)
 } finally {
