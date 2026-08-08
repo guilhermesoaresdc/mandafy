@@ -6,6 +6,7 @@ import { SessionFrame } from '@/components/shell/app-shell'
 import { Badge, BotaoAcao, Button, Card, CardBody, EmptyState } from '@/components/ui'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { alternarFluxoAction, criarFluxosModeloAction } from './actions'
+import { descreverEvento } from '@/lib/vocabulario'
 
 export const metadata: Metadata = { title: 'Fluxos · Mandafy' }
 export const dynamic = 'force-dynamic'
@@ -70,8 +71,19 @@ export default async function FluxosPage() {
                     ) : null}
                   </div>
 
-                  <p className="mt-0.5 font-mono text-2xs text-pending">
-                    {fluxo.triggerEvent} · {fluxo.passos} passo{fluxo.passos === 1 ? '' : 's'}
+                  {/*
+                    O NOME DO EVENTO, e o código na dica.
+
+                    `order.created · 4 passos` obrigava a decorar um dicionário
+                    para ler a própria banca. O dicionário existe desde sempre
+                    em `vocabulario.ts` e era usado em outras telas — esta
+                    imprimia o identificador cru, em font-mono, como se fosse
+                    para um programador. O código sobrevive no `title`, onde
+                    serve a quem for integrar sem atrapalhar quem for operar.
+                  */}
+                  <p className="mt-0.5 text-2xs text-pending" title={fluxo.triggerEvent}>
+                    {descreverEvento(fluxo.triggerEvent).nome} · {fluxo.passos} mensagem
+                    {fluxo.passos === 1 ? '' : 's'}
                     {fluxo.ritmo ? ` · ${fluxo.ritmo}` : ''}
                   </p>
                 </div>

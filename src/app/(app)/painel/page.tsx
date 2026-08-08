@@ -405,7 +405,7 @@ export default async function PainelPage() {
                     <span className="min-w-0 flex-1 truncate text-ink-2">
                       {envio.contactName ?? '—'}
                     </span>
-                    <span className="truncate font-mono text-pending">{envio.messageKey ?? ''}</span>
+                    <span className="truncate text-pending">{envio.messageKey ?? ''}</span>
                   </div>
                 ))
               )}

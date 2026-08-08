@@ -52,6 +52,16 @@ export type LinhaHistorico = {
   contactId: string | null
   contactName: string | null
   messageKey: string | null
+  /**
+   * O nome que a pessoa deu à mensagem.
+   *
+   * Vem JUNTO com a chave, e não no lugar dela: a tela de operação mostra o
+   * nome ("Lembrete de PIX"), o CSV e a API continuam exportando a chave
+   * (`pix_lembrete_1`), que é contrato com quem integra. Antes só havia a
+   * chave, e procurar "Lembrete de PIX" no histórico não achava nada — a
+   * linha se chamava outra coisa.
+   */
+  messageName: string | null
   scheduledFor: Date | null
   sentAt: Date | null
   deliveredAt: Date | null
@@ -120,6 +130,7 @@ export async function listarHistorico(
       contactId: notifications.contactId,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
       scheduledFor: notifications.scheduledFor,
       attemptedAt: notifications.attemptedAt,
       sentAt: notifications.sentAt,
@@ -143,6 +154,7 @@ export async function listarHistorico(
     contactId: linha.contactId,
     contactName: linha.contactName,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     scheduledFor: linha.scheduledFor,
     sentAt: linha.sentAt,
     deliveredAt: linha.deliveredAt,
@@ -200,6 +212,16 @@ export type DetalheNotificacao = {
   contactName: string | null
   contactId: string | null
   messageKey: string | null
+  /**
+   * O nome que a pessoa deu à mensagem.
+   *
+   * Vem JUNTO com a chave, e não no lugar dela: a tela de operação mostra o
+   * nome ("Lembrete de PIX"), o CSV e a API continuam exportando a chave
+   * (`pix_lembrete_1`), que é contrato com quem integra. Antes só havia a
+   * chave, e procurar "Lembrete de PIX" no histórico não achava nada — a
+   * linha se chamava outra coisa.
+   */
+  messageName: string | null
   messageId: string | null
   renderedSubject: string | null
   /** Exatamente o que saiu (§6.5). */
@@ -229,6 +251,7 @@ export async function detalharNotificacao(
       n: notifications,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
     })
     .from(notifications)
     .leftJoin(contacts, eq(contacts.id, notifications.contactId))
@@ -248,6 +271,7 @@ export async function detalharNotificacao(
     contactName: linha.contactName,
     contactId: n.contactId,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     messageId: n.messageId,
     renderedSubject: n.renderedSubject,
     renderedBody: n.renderedBody,
@@ -289,6 +313,7 @@ export async function novidadesDesde(
       contactId: notifications.contactId,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
       scheduledFor: notifications.scheduledFor,
       attemptedAt: notifications.attemptedAt,
       sentAt: notifications.sentAt,
@@ -325,6 +350,7 @@ export async function novidadesDesde(
     contactId: linha.contactId,
     contactName: linha.contactName,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     scheduledFor: linha.scheduledFor,
     sentAt: linha.sentAt,
     deliveredAt: linha.deliveredAt,

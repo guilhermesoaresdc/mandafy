@@ -53,8 +53,13 @@ export default async function MensagensPage() {
                       </Badge>
                     ) : null}
                   </div>
-                  <p className="mt-0.5 font-mono text-2xs text-pending">
-                    {mensagem.key} · {MESSAGE_CATEGORY_LABELS[mensagem.category]}
+                  {/*
+                    A chave sai da lista e vai para a dica. Ela é contrato com
+                    quem integra pela API — e quem abre esta tela está
+                    procurando "o lembrete de PIX", não `pix_lembrete_1`.
+                  */}
+                  <p className="mt-0.5 text-2xs text-pending" title={mensagem.key}>
+                    {MESSAGE_CATEGORY_LABELS[mensagem.category]}
                   </p>
                 </div>
 

@@ -385,3 +385,56 @@ export function explicarDesligamento(
     ? `${inicio}: ${motivo}. Verifique e ligue de novo.`
     : `${inicio}. Verifique e ligue de novo.`
 }
+
+/**
+ * Por que uma mensagem não saiu, em português (§10.1).
+ *
+ * O histórico tem uma coluna chamada "Tempo / motivo" que, para o que falhou,
+ * imprimia o código cru: `sem_optin`, `credencial_recusada`,
+ * `bloqueado_pelo_destino`. Quem opera a banca lia um identificador de
+ * programador na única coluna que responde "por que fulano não recebeu?".
+ *
+ * DOIS GRUPOS, E A DIFERENÇA IMPORTA PARA QUEM LÊ
+ *
+ * Os primeiros são decisões do próprio Mandafy — regras de proteção que
+ * barraram o envio de propósito. Os últimos são o provedor recusando, e são os
+ * que estavam sem tradução nenhuma.
+ */
+export const MOTIVO_LABELS: Record<string, string> = {
+  // Barrado por regra nossa (§5.3)
+  optout: 'a pessoa pediu para não receber',
+  suppressed: 'canal bloqueado para este contato',
+  sem_optin: 'sem consentimento para mensagem promocional',
+  frequency_cap: 'já recebeu o limite de mensagens hoje',
+  duplicate: 'envio idêntico já registrado',
+  sem_destino: 'sem endereço para este canal',
+  canal_desligado: 'canal desligado nesta mensagem',
+  mensagem_pausada: 'a mensagem está pausada',
+  sem_numero_conectado: 'nenhum número de WhatsApp conectado',
+
+  // Recusado pelo provedor (§8.1) — estes não tinham tradução em lugar nenhum
+  sem_credencial: 'falta a credencial deste canal',
+  credencial_recusada: 'o provedor recusou a credencial',
+  provedor_indisponivel: 'o provedor está fora do ar',
+  servidor_indisponivel: 'o servidor do provedor não respondeu',
+  instancia_desconectada: 'o número de WhatsApp desconectou',
+  limite_provedor: 'o provedor limitou o envio por excesso',
+  destino_invalido: 'o endereço não existe',
+  sem_whatsapp: 'este número não tem WhatsApp',
+  bloqueado_pelo_destino: 'a pessoa bloqueou a banca',
+  resposta_inesperada: 'o provedor respondeu algo que não entendemos',
+  rede: 'a conexão com o provedor falhou',
+  tentativas_esgotadas: 'tentamos várias vezes e não saiu',
+}
+
+/**
+ * A frase do motivo, ou o código quando ele é novo.
+ *
+ * Devolver o código cru é melhor que devolver vazio: um provedor pode inventar
+ * um erro que ainda não traduzimos, e nesse caso ver `saldo_zerado` é pior que
+ * ver nada apenas para quem não integra — para quem integra, é a resposta.
+ */
+export function explicarMotivo(codigo: string | null | undefined): string {
+  if (!codigo) return ''
+  return MOTIVO_LABELS[codigo] ?? codigo
+}

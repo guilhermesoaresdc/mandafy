@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle } from '@/components/ui'
 import type { ResumoNoAr } from '@/db/queries/no-ar'
 import { formatNumber } from '@/lib/utils'
+import { descreverEvento } from '@/lib/vocabulario'
 
 /**
  * "O que está no ar" — o bloco que responde à pergunta antes dela ser feita.
@@ -80,8 +81,8 @@ export function NoAr({ resumo }: { resumo: ResumoNoAr }) {
             <div key={fluxo.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="min-w-40 flex-1 truncate text-2xs text-ink">{fluxo.name}</span>
 
-              <span className="font-mono text-2xs text-pending">
-                {fluxo.triggerEvent}
+              <span className="text-2xs text-pending" title={fluxo.triggerEvent}>
+                {descreverEvento(fluxo.triggerEvent).nome}
                 {fluxo.gatilhos > 0 ? ` · ${formatNumber(fluxo.gatilhos)} recebido(s)` : ''}
               </span>
 

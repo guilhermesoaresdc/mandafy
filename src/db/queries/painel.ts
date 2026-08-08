@@ -309,7 +309,7 @@ export async function proximosEnvios(
       channel: notifications.channel,
       scheduledFor: notifications.scheduledFor,
       contactName: contacts.name,
-      messageKey: messages.key,
+      messageKey: messages.name,
     })
     .from(notifications)
     .leftJoin(contacts, eq(contacts.id, notifications.contactId))

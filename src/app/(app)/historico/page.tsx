@@ -79,6 +79,7 @@ export default async function HistoricoPage({
     contactId: l.contactId,
     contactName: l.contactName,
     messageKey: l.messageKey,
+    messageName: l.messageName,
     scheduledFor: l.scheduledFor?.toISOString() ?? null,
     errorCode: l.errorCode,
     latenciaMs: l.latenciaMs,

@@ -13,6 +13,7 @@ import {
 } from '@/db/schema/enums'
 import { Dica } from '@/components/ui'
 import { cn } from '@/lib/utils'
+import { explicarMotivo } from '@/lib/vocabulario'
 import { DetalheEnvio } from './detalhe'
 
 /**
@@ -34,6 +35,7 @@ export type LinhaLog = {
   contactId: string | null
   contactName: string | null
   messageKey: string | null
+  messageName: string | null
   scheduledFor: string | null
   errorCode: string | null
   latenciaMs: number | null
@@ -101,7 +103,9 @@ function latenciaTexto(linha: LinhaLog): string {
   if (linha.status === 'scheduled' || linha.status === 'queued') {
     return linha.scheduledFor ? hora(linha.scheduledFor).slice(0, 5) : ''
   }
-  if (linha.errorCode) return linha.errorCode
+  // O motivo em português, não o código do banco. A coluna se chama
+  // "Tempo / motivo" e imprimia `sem_optin` para quem opera a banca.
+  if (linha.errorCode) return explicarMotivo(linha.errorCode)
   if (linha.latenciaMs === null) return ''
   return linha.latenciaMs < 1000
     ? `${linha.latenciaMs}ms`
@@ -511,7 +515,7 @@ export function LogAoVivo({
                         resposta.
                       */}
                       <p className="text-2xs text-pending">
-                        <span className="font-mono">{linha.messageKey ?? '—'}</span>
+                        <span>{linha.messageName ?? linha.messageKey ?? '—'}</span>
                         {detalhe ? <span className="text-ink-2"> · {detalhe}</span> : null}
                       </p>
                     </button>
@@ -567,8 +571,17 @@ export function LogAoVivo({
                     <td className="max-w-40 truncate py-1 pr-2 text-ink">
                       {linha.contactName ?? '—'}
                     </td>
-                    <td className="max-w-44 truncate py-1 pr-2 text-ink-2">
-                      {linha.messageKey ?? '—'}
+                    {/*
+                      O NOME, e a chave na dica. Procurar "Lembrete de PIX" no
+                      histórico não achava nada: a linha se chamava
+                      `pix_lembrete_1`. A chave continua no CSV e na API, que
+                      são contrato com quem integra.
+                    */}
+                    <td
+                      className="max-w-44 truncate py-1 pr-2 font-sans text-ink-2"
+                      title={linha.messageKey ?? undefined}
+                    >
+                      {linha.messageName ?? linha.messageKey ?? '—'}
                     </td>
                     <td className={cn('py-1 pr-2 whitespace-nowrap', TOM[linha.status])}>
                       {MARCA[linha.status]} {NOTIFICATION_STATUS_LABELS[linha.status]}
