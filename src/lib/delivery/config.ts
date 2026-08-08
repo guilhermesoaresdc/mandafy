@@ -5,6 +5,7 @@ import type { Channel } from '@/db/schema/enums'
 import { serverEnv } from '@/env'
 import { decryptSecret } from '@/lib/crypto'
 import type { ConfigDeCanal } from '@/lib/channels'
+import { FALHAS_PARA_DESLIGAR } from './disjuntor'
 import type { InstanciaWhatsapp } from './warmup'
 
 /**
@@ -74,6 +75,8 @@ export async function resolverCanal(
       provider: channelConfigs.provider,
       credentials: channelConfigs.credentialsEncrypted,
       active: channelConfigs.active,
+      disabledAt: channelConfigs.disabledAt,
+      disabledReason: channelConfigs.disabledReason,
     })
     .from(channelConfigs)
     .where(
@@ -87,8 +90,22 @@ export async function resolverCanal(
 
   const cred = abrirCredenciais(linha?.credentials ?? null)
 
+  /*
+   * Desligado por alguém e desligado pelo disjuntor são a mesma coluna e duas
+   * situações opostas. "O canal está desligado nas configurações" para quem não
+   * desligou nada manda procurar um interruptor que ela não mexeu — e o motivo
+   * verdadeiro, que o provedor já disse, ficaria guardado sem ninguém ler.
+   */
   if (linha && !linha.active) {
-    return { alvo: null, provider: linha.provider, falta: 'o canal está desligado nas configurações' }
+    return {
+      alvo: null,
+      provider: linha.provider,
+      falta: linha.disabledAt
+        ? `desligado sozinho depois de ${FALHAS_PARA_DESLIGAR} falhas seguidas${
+            linha.disabledReason ? ` (${linha.disabledReason})` : ''
+          } — verifique e ligue de novo em Canais`
+        : 'o canal está desligado nas configurações',
+    }
   }
 
   switch (canal) {

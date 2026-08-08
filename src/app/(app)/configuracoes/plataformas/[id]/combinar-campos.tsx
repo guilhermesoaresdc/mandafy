@@ -114,13 +114,33 @@ export function CombinarCampos({
    */
   const detectado = useMemo(() => detectarMapeamento(payload), [payload])
 
-  const [eventPath, setEventPath] = useState(
-    inicial.event_path ?? detectado.eventPath ?? '$.event',
+  /*
+   * UM CAMINHO SALVO QUE NÃO RESOLVE NO PAYLOAD É UM BURACO, NÃO UM AJUSTE.
+   *
+   * `inicial.event_path` nunca é nulo — `'$.event'` é o `.default` do schema,
+   * gravado na criação de toda plataforma. Então `inicial ?? detectado` fazia
+   * a detecção ser calculada e descartada, sempre: exatamente a armadilha que
+   * o comentário de `comPalpites` diz ter consertado para os outros campos.
+   *
+   * A regra que já vale para contato e campos passa a valer aqui: o que foi
+   * salvo manda, EXCETO quando não encontra nada no que a plataforma mandou de
+   * verdade. Aí é palpite velho, não decisão de ninguém.
+   */
+  const salvoResolve = useMemo(
+    () =>
+      Boolean(payload && inicial.event_path && getByPath(payload, inicial.event_path) != null),
+    [payload, inicial.event_path],
   )
+
+  const caminhoInicial = salvoResolve
+    ? (inicial.event_path ?? '$.event')
+    : (detectado.eventPath ?? inicial.event_path ?? '$.event')
+
+  const [eventPath, setEventPath] = useState(caminhoInicial)
 
   const [eventMap, setEventMap] = useState<Record<string, string>>(() => {
     const salvo = inicial.event_map ?? {}
-    const nome = payload ? String(getByPath(payload, inicial.event_path ?? detectado.eventPath ?? '$.event') ?? '') : ''
+    const nome = payload ? String(getByPath(payload, caminhoInicial) ?? '') : ''
 
     // O evento que acabou de chegar entra traduzido, quando dá para reconhecê-lo.
     return nome && !(nome in salvo) && detectado.eventoCanonico

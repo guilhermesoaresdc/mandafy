@@ -35,6 +35,15 @@ export const channelConfigs = pgTable(
     rateLimitPerMinute: integer('rate_limit_per_minute'),
     dailyCap: integer('daily_cap'),
     active: boolean('active').notNull().default(true),
+    /*
+     * O disjuntor (drizzle/0026). `disabledAt` é o que separa "a pessoa
+     * desligou" de "o sistema desligou" — as duas telas dizem coisas
+     * diferentes, e sem esta coluna `active = false` não sabe qual das duas é.
+     */
+    consecutiveFailures: smallint('consecutive_failures').notNull().default(0),
+    lastErrorCode: text('last_error_code'),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    disabledReason: text('disabled_reason'),
     isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

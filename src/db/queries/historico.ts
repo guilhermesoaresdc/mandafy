@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { Tx } from '@/db'
 import { contacts, messages, notifications } from '@/db/schema'
 import { CHANNELS, NOTIFICATION_STATUSES, type Channel, type NotificationStatus } from '@/db/schema/enums'
@@ -10,6 +10,25 @@ import { CHANNELS, NOTIFICATION_STATUSES, type Channel, type NotificationStatus 
  * recorte de tempo — sem ele o Postgres varreria todas as partições, e o alvo
  * de 200ms de §13.1 morre na primeira semana de operação.
  */
+
+/**
+ * Lê uma lista de um `searchParams` ou de uma query string, descartando o que
+ * não existe.
+ *
+ * Mora AQUI e não na rota SSE porque agora há três leitores do mesmo filtro —
+ * a página, a rota de eventos e o link do CSV — e dois validadores para o mesmo
+ * parâmetro é como duas telas passam a discordar sobre o que `status=falhou`
+ * quer dizer. Devolve `undefined` quando não sobra nada válido: filtro vazio é
+ * ausência de filtro, não filtro que não casa com nada.
+ */
+export function paramLista<T extends string>(
+  valor: string | null | undefined,
+  validos: readonly T[],
+): T[] | undefined {
+  if (!valor) return undefined
+  const itens = valor.split(',').filter((v): v is T => (validos as readonly string[]).includes(v))
+  return itens.length > 0 ? itens : undefined
+}
 
 export type FiltroHistorico = {
   canais?: readonly Channel[]
@@ -33,6 +52,16 @@ export type LinhaHistorico = {
   contactId: string | null
   contactName: string | null
   messageKey: string | null
+  /**
+   * O nome que a pessoa deu à mensagem.
+   *
+   * Vem JUNTO com a chave, e não no lugar dela: a tela de operação mostra o
+   * nome ("Lembrete de PIX"), o CSV e a API continuam exportando a chave
+   * (`pix_lembrete_1`), que é contrato com quem integra. Antes só havia a
+   * chave, e procurar "Lembrete de PIX" no histórico não achava nada — a
+   * linha se chamava outra coisa.
+   */
+  messageName: string | null
   scheduledFor: Date | null
   sentAt: Date | null
   deliveredAt: Date | null
@@ -101,6 +130,7 @@ export async function listarHistorico(
       contactId: notifications.contactId,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
       scheduledFor: notifications.scheduledFor,
       attemptedAt: notifications.attemptedAt,
       sentAt: notifications.sentAt,
@@ -124,12 +154,34 @@ export async function listarHistorico(
     contactId: linha.contactId,
     contactName: linha.contactName,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     scheduledFor: linha.scheduledFor,
     sentAt: linha.sentAt,
     deliveredAt: linha.deliveredAt,
     errorCode: linha.errorCode,
     latenciaMs: latencia(linha.attemptedAt, linha.sentAt, linha.deliveredAt),
   }))
+}
+
+/**
+ * QUANTAS LINHAS EXISTEM, e não quantas couberam.
+ *
+ * O rodapé imprimia "200 de 200" porque contava o que tinha na memória do
+ * navegador — o mesmo número dos dois lados da frase, sempre, qualquer que
+ * fosse o tamanho da operação. Uma tela que não sabe dizer que está mostrando
+ * uma fatia é uma tela em que "não achei" e "não existe" viram a mesma coisa.
+ */
+export async function contarHistorico(
+  tx: Tx,
+  filtro: FiltroHistorico = {},
+  agora = new Date(),
+): Promise<number> {
+  const [linha] = await tx
+    .select({ total: count() })
+    .from(notifications)
+    .where(and(...condicoes(filtro, agora)))
+
+  return linha?.total ?? 0
 }
 
 /**
@@ -160,6 +212,16 @@ export type DetalheNotificacao = {
   contactName: string | null
   contactId: string | null
   messageKey: string | null
+  /**
+   * O nome que a pessoa deu à mensagem.
+   *
+   * Vem JUNTO com a chave, e não no lugar dela: a tela de operação mostra o
+   * nome ("Lembrete de PIX"), o CSV e a API continuam exportando a chave
+   * (`pix_lembrete_1`), que é contrato com quem integra. Antes só havia a
+   * chave, e procurar "Lembrete de PIX" no histórico não achava nada — a
+   * linha se chamava outra coisa.
+   */
+  messageName: string | null
   messageId: string | null
   renderedSubject: string | null
   /** Exatamente o que saiu (§6.5). */
@@ -189,6 +251,7 @@ export async function detalharNotificacao(
       n: notifications,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
     })
     .from(notifications)
     .leftJoin(contacts, eq(contacts.id, notifications.contactId))
@@ -208,6 +271,7 @@ export async function detalharNotificacao(
     contactName: linha.contactName,
     contactId: n.contactId,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     messageId: n.messageId,
     renderedSubject: n.renderedSubject,
     renderedBody: n.renderedBody,
@@ -249,6 +313,7 @@ export async function novidadesDesde(
       contactId: notifications.contactId,
       contactName: contacts.name,
       messageKey: messages.key,
+      messageName: messages.name,
       scheduledFor: notifications.scheduledFor,
       attemptedAt: notifications.attemptedAt,
       sentAt: notifications.sentAt,
@@ -285,6 +350,7 @@ export async function novidadesDesde(
     contactId: linha.contactId,
     contactName: linha.contactName,
     messageKey: linha.messageKey,
+    messageName: linha.messageName,
     scheduledFor: linha.scheduledFor,
     sentAt: linha.sentAt,
     deliveredAt: linha.deliveredAt,

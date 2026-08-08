@@ -4,7 +4,9 @@ import { contacts, notifications, waInstances } from '@/db/schema'
 import { enviarPeloCanal } from '@/lib/channels'
 import type { DestinoEnvio, ResultadoEnvio } from '@/lib/channels'
 import { createLogger } from '@/lib/logger'
+import type { Channel } from '@/db/schema/enums'
 import { carregarInstancias, resolverCanal } from './config'
+import { registrarFalhaDeCanal, zerarFalhasDoCanal } from './disjuntor'
 import { linkDescadastro } from './enqueue'
 
 /**
@@ -200,7 +202,7 @@ export async function processarEnvio(dados: DadosJobEnvio): Promise<DesfechoEnvi
 
   const resultado = await enviarPeloCanal(destino, canal.alvo)
 
-  await registrarResultado(ctx, dados, criadoEm, linha.providerInstance, resultado)
+  await registrarResultado(ctx, dados, criadoEm, linha.channel, linha.providerInstance, resultado)
 
   if (resultado.ok) {
     return { desfecho: 'enviado', providerMessageId: resultado.providerMessageId }
@@ -220,6 +222,7 @@ async function registrarResultado(
   ctx: { orgId: string; userId: string; isAdmin: boolean },
   dados: DadosJobEnvio,
   criadoEm: Date,
+  canal: Channel,
   instanciaId: string | null,
   resultado: ResultadoEnvio,
 ): Promise<void> {
@@ -248,6 +251,10 @@ async function registrarResultado(
           })
           .where(eq(waInstances.id, instanciaId))
       }
+
+      // Uma mensagem que saiu prova que o canal está de pé: "consecutivas"
+      // tem de querer dizer consecutivas.
+      await zerarFalhasDoCanal(tx, dados.orgId, canal)
       return
     }
 
@@ -266,6 +273,32 @@ async function registrarResultado(
         errorMessage: resultado.mensagem.slice(0, 500),
       })
       .where(and(eq(notifications.id, dados.notificationId), eq(notifications.createdAt, criadoEm)))
+
+    /*
+     * O disjuntor, DENTRO da mesma transação que gravou a falha.
+     *
+     * Fora dela, um envio poderia gravar "falhou" e o processo morrer antes de
+     * contar — e o canal quebrado seguiria contando do zero para sempre,
+     * exatamente no cenário em que o disjuntor precisa funcionar.
+     */
+    const desligou = await registrarFalhaDeCanal(
+      tx,
+      dados.orgId,
+      canal,
+      resultado.codigo,
+      resultado.mensagem,
+      resultado.provider,
+    )
+
+    if (desligou) {
+      // Uma linha de log no desligamento, e não uma por mensagem: é a
+      // diferença que o disjuntor existe para fazer.
+      log.warn('canal desligado pelo disjuntor', {
+        canal: desligou.canal,
+        codigo: desligou.codigo,
+        falhas: desligou.falhas,
+      })
+    }
   })
 }
 

@@ -5,6 +5,8 @@ import { Button, Card, CardBody, CardHeader, CardTitle, Field, Input, fieldDescr
 import { MODELOS_CHAVE, montarChave, variaveisDaChave } from '@/lib/flows/cancel-key'
 import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
 import { salvarFluxoAction, type FluxoState } from '../actions'
+import { CANONICAL_EVENTS } from '@/db/schema/enums'
+import { descreverEvento, ehEventoQueOMandafyNaoGera } from '@/lib/vocabulario'
 
 /**
  * Configuração do fluxo, com a chave de cancelamento em destaque.
@@ -17,6 +19,8 @@ import { salvarFluxoAction, type FluxoState } from '../actions'
 export function ConfigFluxo({
   id,
   nome,
+  triggerEvent,
+  cancelOn,
   cancelKeyTemplate,
   precisaDeChave,
   janelaLigada,
@@ -24,15 +28,27 @@ export function ConfigFluxo({
 }: {
   id: string
   nome: string
+  /** O evento que dispara. Era escrito pelo seed e virava imutável. */
+  triggerEvent: string
+  /** Os eventos que param o fluxo — o "combinar com outro evento" (§5.1). */
+  cancelOn: string[]
   cancelKeyTemplate: string | null
   precisaDeChave: boolean
   janelaLigada: boolean
   maxPorDia: number
 }) {
   const [chave, setChave] = useState(cancelKeyTemplate ?? '')
+  /*
+   * `cancelam` mora no cliente porque a guarda depende dele: cancelar sem
+   * chave é o pior estado possível — o fluxo agenda os envios e nada consegue
+   * pará-los —, e a tela precisa exigir a chave no momento da marcação, não
+   * depois do salvamento.
+   */
+  const [cancelam, setCancelam] = useState<string[]>(cancelOn)
   const [estado, salvar, salvando] = useActionState<FluxoState, FormData>(salvarFluxoAction, {})
 
   const nomeId = useId()
+  const gatilhoId = useId()
   const chaveId = useId()
   const maxId = useId()
 
@@ -66,10 +82,79 @@ export function ConfigFluxo({
             <Input id={nomeId} name="nome" defaultValue={nome} maxLength={80} required />
           </Field>
 
+          {/*
+            O GATILHO DEIXA DE SER IMUTÁVEL.
+
+            `triggerEvent` não estava no schema da ação, então não havia como
+            mudá-lo: o evento era escrito uma vez pelo seed e ficava assim para
+            sempre. Sete dos quinze eventos canônicos não tinham fluxo e nunca
+            teriam.
+          */}
+          <Field label="Quando isto acontecer" htmlFor={gatilhoId}>
+            <select
+              id={gatilhoId}
+              name="triggerEvent"
+              defaultValue={triggerEvent}
+              className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-live"
+            >
+              {CANONICAL_EVENTS.map((evento) => (
+                <option key={evento} value={evento}>
+                  {descreverEvento(evento).nome}
+                  {ehEventoQueOMandafyNaoGera(evento) ? ' (o Mandafy ainda não gera)' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {/*
+            "PARA SOZINHO EM" — o combinar com outro evento, pedido, e que cabe
+            no motor de hoje: `run.ts` já lê `cancel_on` e cancela por chave.
+          */}
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="mb-1.5 text-2xs font-medium text-ink-2">
+              Para sozinho quando acontecer
+            </legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+              {CANONICAL_EVENTS.filter((e) => e !== triggerEvent).map((evento) => (
+                <label key={evento} className="flex items-center gap-1.5 text-2xs text-ink-2">
+                  <input
+                    type="checkbox"
+                    name="cancelOn"
+                    value={evento}
+                    checked={cancelam.includes(evento)}
+                    onChange={(e) =>
+                      setCancelam((atual) =>
+                        e.target.checked
+                          ? [...atual, evento]
+                          : atual.filter((c) => c !== evento),
+                      )
+                    }
+                    className="size-3 accent-ink"
+                  />
+                  {descreverEvento(evento).nome}
+                </label>
+              ))}
+            </div>
+            {cancelam.length > 0 && chave.trim() === '' ? (
+              <p className="text-2xs text-fail">
+                Escolha a chave abaixo: sem ela o fluxo agenda os envios e nada consegue pará-los.
+              </p>
+            ) : null}
+          </fieldset>
+
+          {/*
+            "CANCELAR QUANDO" NÃO ERA O QUE ESTE CAMPO FAZ.
+
+            O rótulo dizia "quando", e o campo pede `order:{{external_id}}` —
+            uma CHAVE, não um momento. Quem parou aqui procurando o "quando"
+            encontrou uma expressão com chaves duplas e foi embora. O "quando"
+            agora tem campo próprio, logo acima; este responde a outra
+            pergunta: o que amarra os envios ao pedido.
+          */}
           <Field
-            label="Cancelar quando"
+            label="O que amarra os envios ao pedido"
             htmlFor={chaveId}
-            hint="A chave que amarra os envios ao pedido. Precisa dar o mesmo resultado no evento que dispara e no que cancela."
+            hint="Precisa dar o mesmo resultado no evento que dispara e no que cancela."
             {...(estado.erro ? { error: estado.erro } : {})}
           >
             <Input
@@ -119,10 +204,18 @@ export function ConfigFluxo({
                 key={modelo.modelo}
                 type="button"
                 onClick={() => setChave(modelo.modelo)}
-                title={modelo.dica}
-                className="rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-ink-2 hover:border-ink hover:text-ink"
+                title={`${modelo.dica} (${modelo.modelo})`}
+                className="rounded border border-line px-2 py-2 text-2xs text-ink-2 hover:border-ink hover:text-ink md:py-0.5"
               >
-                {modelo.modelo}
+                {/*
+                  O RÓTULO, e não a expressão. "Por aposta · Por contato · Por
+                  sorteio" está escrito em `cancel-key.ts` desde sempre e nunca
+                  foi lido por tela nenhuma — os botões mostravam
+                  `order:{{external_id}}`, que é o que o campo já vai receber
+                  quando alguém clicar. Dizer duas vezes a mesma coisa técnica é
+                  não dizer a única que ajuda a escolher.
+                */}
+                {modelo.rotulo}
               </button>
             ))}
           </div>

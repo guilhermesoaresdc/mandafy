@@ -58,8 +58,19 @@ export type ResumoNoAr = {
   dias: number
 }
 
-function diaUtc(instante: Date): string {
-  return instante.toISOString().slice(0, 10)
+/**
+ * A chave de dia de `notification_daily_stats`, no fuso da operação.
+ *
+ * Era `toISOString().slice(0,10)` — dia UTC — enquanto o agregado passou a
+ * guardar o dia de Brasília (drizzle/0027). Ler com uma régua e gravar com
+ * outra faz este corte de "últimos 7 dias" pegar 7 dias e 3 horas, ou 6 e 21,
+ * dependendo da hora em que a tela é aberta. É pouco, e é do tipo de erro que
+ * ninguém consegue reproduzir depois.
+ */
+const FUSO_OPERACAO = process.env.DEFAULT_TIMEZONE ?? 'America/Sao_Paulo'
+
+function diaLocal(instante: Date): string {
+  return instante.toLocaleDateString('en-CA', { timeZone: FUSO_OPERACAO })
 }
 
 export async function resumoNoAr(tx: Tx, agora = new Date()): Promise<ResumoNoAr> {
@@ -103,7 +114,7 @@ export async function resumoNoAr(tx: Tx, agora = new Date()): Promise<ResumoNoAr
         .from(notificationDailyStats)
         .where(
           and(
-            gte(notificationDailyStats.day, diaUtc(desde)),
+            gte(notificationDailyStats.day, diaLocal(desde)),
             inArray(notificationDailyStats.flowId, ids),
           ),
         )

@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Badge, Button, Modal } from '@/components/ui'
 import { formatBRL } from '@/lib/utils'
 import type { LinhaLead } from './tabela'
+import { AcoesDoLead } from './acoes-lead'
 
 /**
  * A ficha do lead — o que abre ao clicar na lista.
@@ -25,13 +26,19 @@ import type { LinhaLead } from './tabela'
  */
 export function FichaDoLead({
   lead,
+  etapas,
   aoFechar,
   aoSelecionar,
+  aoEnviar,
 }: {
   lead: LinhaLead | null
+  /** As etapas do funil, para mover daqui mesmo. */
+  etapas: { id: string; name: string }[]
   aoFechar: () => void
   /** Junta este lead à seleção, para disparar sem sair da lista. */
   aoSelecionar?: (id: string) => void
+  /** Abre o disparo com este lead só. */
+  aoEnviar?: (lead: LinhaLead) => void
 }) {
   if (!lead) return null
 
@@ -91,6 +98,24 @@ export function FichaDoLead({
         <Linha rotulo="Entrou por" valor={lead.source} />
         <Linha rotulo="Último evento" valor={porExtenso(lead.lastEventAt)} />
       </dl>
+
+      {/*
+        A FICHA PASSA A TRABALHAR.
+
+        Ela mostrava nome, contato, valor, origem e último evento, e oferecia
+        "Abrir página completa", "Selecionar para envio", "Fechar". Para mover
+        de etapa ou anotar uma conversa era preciso sair da lista, abrir uma
+        página, agir e voltar — por lead. Quem trabalha uma fila de vinte fazia
+        isso vinte vezes.
+      */}
+      <div className="mt-3 border-t border-line pt-3">
+        <AcoesDoLead
+          leadId={lead.id}
+          stageId={lead.stageId}
+          etapas={etapas}
+          {...(aoEnviar ? { aoEnviar: () => aoEnviar(lead) } : {})}
+        />
+      </div>
 
       <p className="mt-3 text-2xs text-pending">
         O histórico do cliente — o que a plataforma mandou e o que já foi enviado a ele — está na

@@ -1,5 +1,5 @@
 import { withTenant } from '@/db'
-import { novidadesDesde, type LinhaHistorico } from '@/db/queries/historico'
+import { novidadesDesde, paramLista, type LinhaHistorico } from '@/db/queries/historico'
 import { CHANNELS, NOTIFICATION_STATUSES, type Channel, type NotificationStatus } from '@/db/schema/enums'
 import { getCurrentUser, tenantOf } from '@/lib/auth/current'
 import { createLogger } from '@/lib/logger'
@@ -27,12 +27,6 @@ const INTERVALO_MS = 2_000
 const KEEPALIVE_MS = 25_000
 /** Teto de vida da conexão. O navegador reconecta sozinho. */
 const MAX_MS = 10 * 60_000
-
-function paramLista<T extends string>(valor: string | null, validos: readonly T[]): T[] | undefined {
-  if (!valor) return undefined
-  const itens = valor.split(',').filter((v): v is T => (validos as readonly string[]).includes(v))
-  return itens.length > 0 ? itens : undefined
-}
 
 export async function GET(request: Request): Promise<Response> {
   const user = await getCurrentUser()

@@ -25,6 +25,8 @@ export type LinhaLead = {
   title: string
   valueCents: number
   status: string
+  /** A etapa atual, para a ficha poder mover sem sair da lista. */
+  stageId: string
   stageName: string
   stageColor: string | null
   ownerId: string | null
@@ -50,12 +52,18 @@ function quando(iso: string | null): string {
 
 export function TabelaLeads({
   linhas,
+  total,
+  etapas,
   consultores,
   podeReatribuir,
   mensagens,
   podeEnviar,
 }: {
   linhas: LinhaLead[]
+  /** Quantos leads o filtro tem no BANCO — não quantos couberam na tela. */
+  total: number
+  /** As etapas do funil, para mover sem sair da lista. */
+  etapas: { id: string; name: string }[]
   consultores: { id: string; name: string }[]
   podeReatribuir: boolean
   /** Mensagens ativas, para o disparo em lote. */
@@ -78,6 +86,15 @@ export function TabelaLeads({
    */
   const [modoSelecao, setModoSelecao] = useState(false)
   const [ficha, setFicha] = useState<LinhaLead | null>(null)
+  /*
+   * O disparo para UM lead, vindo da ficha.
+   *
+   * Estado próprio, e não `selecionados`: marcar o lead na seleção para poder
+   * enviar acenderia a barra de lote e deixaria a lista num estado que a pessoa
+   * não pediu — ela quis mandar uma mensagem para uma pessoa, não começar um
+   * lote de um.
+   */
+  const [alvoDireto, setAlvoDireto] = useState<LinhaLead | null>(null)
   const [estado, atribuir, atribuindo] = useActionState<LeadState, FormData>(atribuirAction, {})
   const [disparando, setDisparando] = useState(false)
 
@@ -166,8 +183,18 @@ export function TabelaLeads({
         ) : null}
 
         {selecionados.size > 0 && podeEnviar ? (
+          /*
+            O BOTÃO DIZ QUANTOS.
+
+            "Enviar mensagem" com 1.000 marcados numa base de 5.000 é a frase
+            mais cara desta tela: quem clicou em "Selecionar todos" acredita ter
+            marcado todo mundo, o disparo confirma, e quatro mil clientes nunca
+            souberam de nada. O número no botão é a única coisa entre a
+            intenção e o resultado.
+          */
           <Button size="sm" onClick={() => setDisparando(true)}>
-            Enviar mensagem
+            Enviar para {selecionados.size}
+            {total > linhas.length ? ` (de ${total} no filtro)` : ''}
           </Button>
         ) : null}
 
@@ -206,14 +233,21 @@ export function TabelaLeads({
         </a>
       </div>
 
-      {disparando ? (
+      {disparando || alvoDireto ? (
         <PainelDisparo
-          alvos={[...selecionados].map((id) => {
-            const lead = linhas.find((l) => l.id === id)
-            return { id, nome: lead?.contactName ?? lead?.title ?? 'sem nome' }
-          })}
+          alvos={
+            alvoDireto
+              ? [{ id: alvoDireto.id, nome: alvoDireto.contactName ?? alvoDireto.title }]
+              : [...selecionados].map((id) => {
+                  const lead = linhas.find((l) => l.id === id)
+                  return { id, nome: lead?.contactName ?? lead?.title ?? 'sem nome' }
+                })
+          }
           mensagens={mensagens}
-          aoFechar={() => setDisparando(false)}
+          aoFechar={() => {
+            setDisparando(false)
+            setAlvoDireto(null)
+          }}
         />
       ) : null}
 
@@ -234,7 +268,7 @@ export function TabelaLeads({
               onChange={(e) =>
                 setSelecionados(e.target.checked ? new Set(visiveis.map((l) => l.id)) : new Set())
               }
-              aria-label="Selecionar todos"
+              aria-label={`Selecionar os ${visiveis.length} leads carregados`}
               className="size-3 accent-ink"
             />
           ) : null}
@@ -321,14 +355,24 @@ export function TabelaLeads({
       </div>
 
       <p className="text-2xs text-pending">
-        {visiveis.length} de {linhas.length} lead(s)
+        {visiveis.length} de {linhas.length} carregado(s)
+        {total > linhas.length ? ` · ${total} no filtro` : ''}
         {selecionados.size > 0 ? ` · ${selecionados.size} selecionado(s)` : ''}
       </p>
 
       <FichaDoLead
         lead={ficha}
+        etapas={etapas}
         aoFechar={() => setFicha(null)}
         {...(podeLote ? { aoSelecionar: selecionarDaFicha } : {})}
+        {...(podeEnviar
+          ? {
+              aoEnviar: (lead: LinhaLead) => {
+                setFicha(null)
+                setAlvoDireto(lead)
+              },
+            }
+          : {})}
       />
     </div>
   )

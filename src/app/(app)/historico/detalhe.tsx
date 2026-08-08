@@ -5,6 +5,7 @@ import { Badge, Button, Separator } from '@/components/ui'
 import { CHANNEL_LABELS, NOTIFICATION_STATUS_LABELS } from '@/db/schema/enums'
 import type { DetalheNotificacao } from '@/db/queries/historico'
 import { carregarDetalhe, reenviarAction, type ReenvioState } from './actions'
+import { MOTIVO_LABELS, explicarMotivo } from '@/lib/vocabulario'
 
 /**
  * Detalhe de um envio (§10.1).
@@ -94,7 +95,10 @@ export function DetalheEnvio({
                   {detalhe.contactName ?? 'Contato removido'}
                 </p>
                 <p className="font-mono text-2xs text-pending">
-                  {CHANNEL_LABELS[detalhe.channel]} · {detalhe.messageKey ?? 'sem mensagem'}
+                  {CHANNEL_LABELS[detalhe.channel]} ·{' '}
+                  <span title={detalhe.messageKey ?? undefined}>
+                    {detalhe.messageName ?? detalhe.messageKey ?? 'sem mensagem'}
+                  </span>
                 </p>
               </div>
               <Badge
@@ -128,10 +132,20 @@ export function DetalheEnvio({
 
             {detalhe.errorMessage || detalhe.errorCode ? (
               <div className="rounded-lg border border-fail/40 p-2">
+                {/*
+                  A frase em português primeiro, o código do provedor embaixo.
+                  Esta janela é aberta por quem quer saber por que a mensagem
+                  não chegou; o código serve para quem for abrir um chamado com
+                  o provedor, e são duas pessoas diferentes na maior parte do
+                  tempo.
+                */}
                 <p className="text-2xs text-fail">
-                  {detalhe.errorCode}
+                  {explicarMotivo(detalhe.errorCode)}
                   {detalhe.errorMessage ? `: ${detalhe.errorMessage}` : ''}
                 </p>
+                {detalhe.errorCode && MOTIVO_LABELS[detalhe.errorCode] ? (
+                  <p className="mt-0.5 font-mono text-2xs text-pending">{detalhe.errorCode}</p>
+                ) : null}
               </div>
             ) : null}
 

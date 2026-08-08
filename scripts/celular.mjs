@@ -61,7 +61,7 @@ const ROTAS = [
   '/historico',
   '/leads',
   '/leads/importar',
-  '/pipeline',
+  '/leads?vista=funil',
   '/canais',
   '/configuracoes/plataformas',
   '/configuracoes/sistema',
@@ -496,7 +496,9 @@ try {
 
     // Sem sessão válida tudo redireciona para /entrar — e a tela de login
     // caberia numa tela pequena sem provar nada sobre as telas de dentro.
-    if (medida.caminho !== rota) {
+    // A rota pode trazer query (`/leads?vista=funil`); o que se compara é o
+    // caminho, senão a tela certa seria acusada de ter redirecionado.
+    if (medida.caminho !== rota.split('?')[0]) {
       checar(`${rota} abre`, false, `caiu em ${medida.caminho}`)
       continue
     }

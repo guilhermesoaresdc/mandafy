@@ -26,10 +26,23 @@ function naoTraduzidos(eventos: EventoRecebido[]): Map<string, number> {
   const contagem = new Map<string, number>()
 
   for (const evento of eventos) {
-    // Só `evento_nao_mapeado`: um erro de outro tipo — payload torto, campo
-    // ausente — se conserta noutro lugar, e misturá-los daria uma lista em que
-    // nenhum item tem a mesma correção.
-    if (!evento.erro?.includes('evento_nao_mapeado') || !evento.nome) continue
+    /*
+     * `evento_nao_mapeado` E `evento_ausente`: os dois se consertam com o
+     * mesmo clique.
+     *
+     * Antes só o primeiro entrava, e `evento_ausente` era justamente o caso em
+     * que a tela mais calava: a plataforma manda `{type: …}`, o mapeamento
+     * procura em `$.event`, e o operador via um JSONPath cru sem nenhum botão.
+     * Agora o motor acha o nome sozinho — e, quando ainda assim sobrar algum,
+     * o botão de tradução aparece para ele também.
+     *
+     * Um erro de outro tipo — payload torto, campo ausente — continua fora:
+     * conserta-se noutro lugar, e misturá-los daria uma lista em que nenhum
+     * item tem a mesma correção.
+     */
+    const traduzivel =
+      evento.erro?.includes('evento_nao_mapeado') || evento.erro?.includes('evento_ausente')
+    if (!traduzivel || !evento.nome) continue
     contagem.set(evento.nome, (contagem.get(evento.nome) ?? 0) + 1)
   }
 

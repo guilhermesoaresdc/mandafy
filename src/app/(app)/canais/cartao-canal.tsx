@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import { Badge, Card, CardBody, ChannelIcon } from '@/components/ui'
 import { CHANNEL_COLOR_VAR, CHANNEL_LABELS, type Channel } from '@/db/schema/enums'
+import { explicarDesligamento } from '@/lib/vocabulario'
 import { AlternarCanal } from './alternar'
 
 /**
@@ -28,6 +29,8 @@ export function CartaoCanal({
   provider,
   configurado,
   ativo,
+  desligadoPeloSistema,
+  motivoDoDesligamento,
   descricao,
   /** Aparece sempre, colapsado ou não — é o estado operacional do canal. */
   resumo,
@@ -40,6 +43,9 @@ export function CartaoCanal({
   provider: string | null
   configurado: boolean
   ativo: boolean
+  /** O disjuntor derrubou este canal (§8.1) — diferente de alguém ter desligado. */
+  desligadoPeloSistema?: Date | null
+  motivoDoDesligamento?: string | null
   descricao: string
   resumo?: ReactNode
   ajustes: ReactNode
@@ -80,6 +86,14 @@ export function CartaoCanal({
               {configurado ? (
                 ativo ? (
                   <Badge tone="ok">ligado</Badge>
+                ) : desligadoPeloSistema ? (
+                  /*
+                    "caiu" e não "desligado": quem não desligou nada leria
+                    "desligado" como um interruptor que ele esqueceu ligado, e
+                    procuraria o próprio erro. O canal parou sozinho, e o tom
+                    de falha é o que faz o cartão saltar na tela.
+                  */
+                  <Badge tone="fail">caiu</Badge>
                 ) : (
                   <Badge tone="pending">desligado</Badge>
                 )
@@ -97,6 +111,19 @@ export function CartaoCanal({
               SPF toda vez que abre a tela.
             */}
             {aberto ? <p className="mt-1 text-2xs text-ink-2">{descricao}</p> : null}
+
+            {/*
+              O aviso do disjuntor vem ANTES do resumo e não some ao colapsar:
+              é a única informação desta tela que exige uma ação, e escondê-la
+              atrás de um clique de "ajustes" seria o mesmo que o canal ter
+              caído em silêncio — que é o defeito que o disjuntor conserta.
+            */}
+            {!ativo && desligadoPeloSistema ? (
+              <p role="status" className="mt-1.5 rounded-lg bg-fail/8 px-2 py-1.5 text-2xs text-fail">
+                {explicarDesligamento(canal, motivoDoDesligamento ?? null)}
+              </p>
+            ) : null}
+
             {resumo ? <div className="mt-1">{resumo}</div> : null}
           </div>
 

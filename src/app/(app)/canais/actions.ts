@@ -11,6 +11,7 @@ import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { encryptSecret } from '@/lib/crypto'
 import { createLogger } from '@/lib/logger'
+import { religarCanal } from '@/lib/delivery/disjuntor'
 import { toE164 } from '@/lib/phone'
 import { CANAL_PROVEDORES } from '@/lib/channels'
 import { gerarTokenRetorno } from '@/lib/channels/retorno-lookup'
@@ -534,11 +535,25 @@ export async function alternarCanalConfigAction(formData: FormData): Promise<voi
   if (!CHANNELS.includes(canal)) return
 
   await withTenant(tenantOf(user), async (tx) => {
+    /*
+     * Ligar de novo é o "verifiquei" do disjuntor (§8.1), e por isso passa por
+     * `religarCanal`: além de `active`, ele limpa a contagem de falhas e a
+     * marca de quem desligou. Sem isso, o canal voltaria com duas falhas já
+     * contadas — a primeira falha seguinte o derrubaria de novo na hora — e a
+     * tela continuaria dizendo "o sistema desligou este canal" logo depois de
+     * a pessoa tê-lo ligado.
+     */
+    if (ativar) {
+      await religarCanal(tx, user.orgId, canal)
+      return
+    }
+
     await tx
       .update(channelConfigs)
-      .set({ active: ativar, updatedAt: new Date() })
+      .set({ active: false, disabledAt: null, disabledReason: null, updatedAt: new Date() })
       .where(and(eq(channelConfigs.orgId, user.orgId), eq(channelConfigs.channel, canal)))
   })
 
   revalidatePath('/canais')
+  revalidatePath('/painel')
 }

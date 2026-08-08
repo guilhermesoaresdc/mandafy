@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gte, inArray, lte, min, sql } from 'drizzle-orm'
 import type { Tx } from '@/db'
 import { contacts, events, messages, notificationDailyStats, notifications } from '@/db/schema'
 import { CHANNELS, type Channel, type NotificationStatus } from '@/db/schema/enums'
@@ -18,6 +18,8 @@ export type MetricasPainel = {
   /** Entregues ÷ enviadas. `null` quando não houve envio — 0% mentiria. */
   taxaEntrega: number | null
   naFila: number
+  /** A hora marcada da mensagem vencida mais antiga que continua esperando. */
+  vencidaDesde: Date | null
   falhas24h: number
   recuperadoCents: number
 
@@ -55,10 +57,6 @@ const SAIU: NotificationStatus[] = ['sent', 'delivered', 'read']
 const CONFIRMADO: NotificationStatus[] = ['delivered', 'read']
 const FALHOU: NotificationStatus[] = ['failed', 'dead']
 
-function diaUtc(instante: Date): string {
-  return instante.toISOString().slice(0, 10)
-}
-
 /** O fuso da banca. "Hoje" é o dia de quem opera, não o do servidor. */
 const FUSO_OPERACAO = process.env.DEFAULT_TIMEZONE ?? 'America/Sao_Paulo'
 
@@ -67,9 +65,49 @@ function diaLocal(instante: Date): string {
   return instante.toLocaleDateString('en-CA', { timeZone: FUSO_OPERACAO })
 }
 
+/**
+ * O instante em que começou o dia `AAAA-MM-DD` no fuso da operação.
+ *
+ * O deslocamento sai do próprio `referencia`: lê-se o mesmo instante como se
+ * fosse UTC e como é no fuso da banca, e a diferença entre os dois é o quanto
+ * somar. Isso acerta o horário de verão sem tabela nenhuma — se a data de
+ * referência está dentro dele, o deslocamento lido já é o de dentro.
+ */
+function meiaNoiteLocal(dia: string, referencia: Date): Date {
+  const comoUtc = new Date(`${dia}T00:00:00.000Z`)
+
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: FUSO_OPERACAO,
+    timeZoneName: 'longOffset',
+  }).formatToParts(referencia)
+
+  // "GMT-03:00" → -180 minutos.
+  const nome = partes.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+00:00'
+  const casa = /GMT([+-])(\d{2}):(\d{2})/.exec(nome)
+  const minutos = casa
+    ? (casa[1] === '-' ? -1 : 1) * (Number(casa[2]) * 60 + Number(casa[3]))
+    : 0
+
+  return new Date(comoUtc.getTime() - minutos * 60_000)
+}
+
 export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<MetricasPainel> {
-  const hoje = diaUtc(agora)
-  const ontem = diaUtc(new Date(agora.getTime() - 24 * 3600 * 1000))
+  /*
+   * UM CALENDÁRIO SÓ.
+   *
+   * Este arquivo definia `diaUtc` E `diaLocal`, e usava um em cada metade do
+   * mesmo cartão: `movimentoDoDia` agrupava em Brasília, `metricasDoPainel`
+   * contava em UTC. Sob um cabeçalho que diz "do 00h de Brasília até agora",
+   * às 22h de sábado apareciam "Comprado R$ 12.400" (dia inteiro) e
+   * "Mensagens enviadas: 7" (uma hora de UTC). Três horas por dia, todo dia —
+   * e justamente a faixa em que uma banca de sorteio está mais movimentada.
+   *
+   * A migration 0027 acompanha e não dá para pular: o agregado guardava o dia
+   * em UTC, então trocar só aqui faria a tela pedir um balde que não existe e
+   * mostrar zero, que é pior que mostrar um número discordante.
+   */
+  const hoje = diaLocal(agora)
+  const ontem = diaLocal(new Date(agora.getTime() - 24 * 3600 * 1000))
 
   const agregados = await tx
     .select({
@@ -94,7 +132,18 @@ export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<Metr
    * seria um número visivelmente errado numa tela que se olha o tempo todo, e
    * a contagem ao vivo de HOJE toca uma partição só.
    */
-  const inicioDoDia = new Date(`${hoje}T00:00:00.000Z`)
+  /*
+   * O início do dia NO FUSO DA OPERAÇÃO.
+   *
+   * `new Date('2026-08-08T00:00:00.000Z')` é meia-noite em Londres, não em São
+   * Paulo — três horas de envios ficavam de fora da contagem ao vivo, ou três
+   * horas do dia anterior entravam nela, dependendo da hora.
+   *
+   * A conta com `Date.UTC` e o deslocamento do fuso resolve sem depender de
+   * biblioteca: `diaLocal` já dá a data certa em texto, e o deslocamento sai da
+   * diferença entre o mesmo instante lido nos dois fusos.
+   */
+  const inicioDoDia = meiaNoiteLocal(hoje, agora)
 
   const [aoVivo] = await tx
     .select({
@@ -112,6 +161,25 @@ export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<Metr
     .from(notifications)
     .where(inArray(notifications.status, ['queued', 'scheduled']))
 
+  /*
+   * A VENCIDA MAIS ANTIGA.
+   *
+   * "500 na fila" não distingue uma operação movimentada de uma operação
+   * parada: a fila cheia é normal às 19h de um sábado de sorteio. O que não é
+   * normal é uma mensagem cuja hora marcada já passou continuar esperando —
+   * isso só acontece quando o batimento não está vazando a fila, e é o número
+   * que separa "tem muita coisa para sair" de "não está saindo nada".
+   */
+  const [vencida] = await tx
+    .select({ quando: min(notifications.scheduledFor) })
+    .from(notifications)
+    .where(
+      and(
+        inArray(notifications.status, ['queued', 'scheduled']),
+        lte(notifications.scheduledFor, agora),
+      ),
+    )
+
   const [falhas] = await tx
     .select({ total: count() })
     .from(notifications)
@@ -128,6 +196,7 @@ export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<Metr
     enviadasHoje: saiuHoje,
     taxaEntrega: saiuHoje === 0 ? null : confirmado / saiuHoje,
     naFila: fila?.total ?? 0,
+    vencidaDesde: vencida?.quando ?? null,
     falhas24h: falhas?.total ?? 0,
     recuperadoCents: await recuperado(tx, agora),
     ...negocio,
@@ -287,7 +356,7 @@ export async function proximosEnvios(
       channel: notifications.channel,
       scheduledFor: notifications.scheduledFor,
       contactName: contacts.name,
-      messageKey: messages.key,
+      messageKey: messages.name,
     })
     .from(notifications)
     .leftJoin(contacts, eq(contacts.id, notifications.contactId))

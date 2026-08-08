@@ -28,17 +28,17 @@ export const MOTIVOS_SKIP = [
 
 export type MotivoSkip = (typeof MOTIVOS_SKIP)[number]
 
-export const MOTIVO_LABELS: Record<MotivoSkip, string> = {
-  optout: 'a pessoa pediu para não receber',
-  suppressed: 'canal bloqueado para este contato',
-  sem_optin: 'sem consentimento para mensagem promocional',
-  frequency_cap: 'já recebeu o limite de mensagens hoje',
-  duplicate: 'envio idêntico já registrado',
-  sem_destino: 'sem endereço para este canal',
-  canal_desligado: 'canal desligado nesta mensagem',
-  mensagem_pausada: 'a mensagem está pausada',
-  sem_numero_conectado: 'nenhum número de WhatsApp conectado',
-}
+/**
+ * As frases dos motivos moram em `@/lib/vocabulario`.
+ *
+ * Saíram daqui porque a TELA também precisa delas — o histórico imprimia
+ * `sem_optin` cru na coluna de motivo — e este módulo é do motor de entrega:
+ * importá-lo de um componente arrastaria o Drizzle e o esquema para o pacote
+ * do navegador por causa de um dicionário de dez frases.
+ *
+ * O reexporte mantém quem já importava daqui funcionando.
+ */
+export { MOTIVO_LABELS } from '@/lib/vocabulario'
 
 /** Teto diário por contato, somando todos os canais (§5.3, regra 4). */
 export const LIMITE_DIARIO_PADRAO = 4
