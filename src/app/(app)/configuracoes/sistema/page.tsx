@@ -5,10 +5,12 @@ import { estadoDoSistema } from '@/db/queries/sistema'
 import { requireAdmin } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import {
+  aplicarLeadsDoWebhookAction,
   aplicarModelosAction,
   baterAgoraAction,
   migrarAction,
   semearAction,
+  simularLeadsDoWebhookAction,
   simularModelosAction,
 } from './actions'
 import { BotaoDeSistema } from './botoes'
@@ -295,6 +297,40 @@ export default async function SistemaPage() {
               acao={semearAction}
               rotulo="Criar o que faltar"
               rotuloOcupado="Criando…"
+            />
+          </CardBody>
+        </Card>
+
+        {/* ── Leads do que a plataforma já mandou ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Leads dos cadastros antigos</CardTitle>
+          </CardHeader>
+          <CardBody className="flex flex-col gap-3">
+            <p className="text-2xs text-ink-2">
+              Quem se cadastra na plataforma vira lead sozinho — mas isso só vale para quem chegou
+              depois de a regra existir. Quem entrou antes está na base como contato e nunca chegou
+              ao time comercial.
+            </p>
+            <p className="text-2xs text-ink-2">
+              Este botão abre o cartão que faltou, na etapa inicial do funil, distribuído entre os
+              consultores ativos.{' '}
+              <span className="text-ink">
+                Quem veio de planilha e quem pediu para não receber ficam de fora
+              </span>{' '}
+              — e rodar duas vezes não duplica nada.
+            </p>
+
+            <BotaoDeSistema
+              acao={simularLeadsDoWebhookAction}
+              rotulo="Ver quantos entrariam"
+              rotuloOcupado="Conferindo…"
+            />
+            <BotaoDeSistema
+              acao={aplicarLeadsDoWebhookAction}
+              rotulo="Abrir os leads"
+              rotuloOcupado="Abrindo…"
+              descricao="Cria os cartões e atribui aos consultores."
             />
           </CardBody>
         </Card>

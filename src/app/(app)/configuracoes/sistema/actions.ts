@@ -6,6 +6,7 @@ import { explicarFalha, runMigrations } from '@/db/migrate'
 import { reaplicarNaConexao, type Desfecho } from '@/db/reaplicar-modelos'
 import { seedFlows } from '@/db/seed-flows'
 import { semearFunilPadrao, semearRitmos } from '@/db/seed-org'
+import { criarLeadsDosContatosDoWebhook } from '@/lib/crm/criar-lead'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
 import { assertCan } from '@/lib/rbac'
 import { createLogger } from '@/lib/logger'
@@ -219,6 +220,85 @@ export async function simularModelosAction(): Promise<EstadoAcao> {
 
 export async function aplicarModelosAction(): Promise<EstadoAcao> {
   return reaplicarModelosAction(true)
+}
+
+/**
+ * Abre os leads dos cadastros que a plataforma já tinha mandado (§9.3).
+ *
+ * POR QUE UM BOTÃO, PELO MESMO MOTIVO DE `reaplicarModelosAction`
+ *
+ * A criação automática de lead só alcança quem chega DEPOIS de ela existir.
+ * Todo cadastro que o webhook trouxe antes está no banco como contato e nunca
+ * chegou ao time comercial — é a maior parte da base, e é uma recuperação que
+ * se faz uma vez. Existe o comando `npm run crm:leads-do-webhook`, mas quem
+ * opera este sistema publica pelo GitHub e olha o navegador: uma correção que
+ * depende de terminal é, para essa pessoa, uma correção que não aconteceu.
+ *
+ * SIMULA PRIMEIRO, ESCREVE DEPOIS
+ *
+ * O primeiro clique só conta. Abrir mil cartões e distribuí-los entre os
+ * consultores não se desfaz com um clique, e o número — quantos entrariam — é
+ * justamente o que ninguém tem antes de rodar.
+ */
+export async function leadsDoWebhookAction(aplicar: boolean): Promise<EstadoAcao> {
+  const user = await requireAdmin()
+  // `reatribuir`, e não `integracoes.gerenciar`: o que este botão faz é abrir
+  // cartão e distribuí-lo entre consultores. A permissão é a do ato.
+  assertCan(user, 'leads.reatribuir')
+
+  try {
+    const r = await withTenant(tenantOf(user), (tx) =>
+      criarLeadsDosContatosDoWebhook(tx, user.orgId, { aplicar }),
+    )
+
+    if (r.semFunil) {
+      return {
+        erro:
+          'Não há funil padrão nesta organização — sem etapa onde pôr os cartões. ' +
+          'Use "Criar o que faltar", acima, e tente de novo.',
+      }
+    }
+
+    const sobreOptOut =
+      r.pulados > 0
+        ? ` ${r.pulados} ${r.pulados === 1 ? 'ficou de fora porque pediu' : 'ficaram de fora porque pediram'} para não receber.`
+        : ''
+
+    if (r.criados === 0) {
+      return {
+        ok: `Nada a fazer: todo contato vindo da plataforma já tem cartão no funil.${sobreOptOut}`,
+      }
+    }
+
+    if (!aplicar) {
+      return {
+        ok:
+          `Simulação — nada foi gravado. ${r.criados} contato(s) da plataforma virariam lead.${sobreOptOut}` +
+          ' Clique em "Abrir os leads" para criar.',
+      }
+    }
+
+    revalidatePath('/configuracoes/sistema')
+    revalidatePath('/leads')
+    revalidatePath('/pipeline')
+
+    return {
+      ok: `${r.criados} lead(s) abertos e distribuídos entre os consultores ativos.${sobreOptOut}`,
+    }
+  } catch (erro) {
+    const mensagem = erro instanceof Error ? erro.message : 'falha desconhecida'
+    log.error('falha ao abrir leads do webhook pelo painel', { reason: mensagem.slice(0, 160) })
+    return { erro: mensagem.slice(0, 400) }
+  }
+}
+
+/** As duas metades do botão, como nas mensagens-modelo. */
+export async function simularLeadsDoWebhookAction(): Promise<EstadoAcao> {
+  return leadsDoWebhookAction(false)
+}
+
+export async function aplicarLeadsDoWebhookAction(): Promise<EstadoAcao> {
+  return leadsDoWebhookAction(true)
 }
 
 /**
