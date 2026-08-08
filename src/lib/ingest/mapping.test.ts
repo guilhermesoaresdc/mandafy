@@ -230,4 +230,64 @@ describe('nomeDoEvento', () => {
     expect(nomeDoEvento('texto')).toBeNull()
     expect(nomeDoEvento([1, 2])).toBeNull()
   })
+
+  /*
+   * ── O MOTOR ACHA O NOME DO EVENTO SOZINHO ──
+   *
+   * `event_path` é sempre `'$.event'`: é o `.default` do schema, gravado na
+   * criação de toda plataforma, e ninguém o edita porque a tela nem sugere que
+   * ele exista. Uma plataforma que escreve `{type: …}` tinha 100% dos eventos
+   * recusados com "nenhum valor em $.event".
+   *
+   * `nomeDoEvento` já sabia procurar nos seis nomes usuais — e era usada só
+   * para EXIBIR na tela de quem configurava. O motor não a consultava.
+   */
+  describe('o nome do evento fora de $.event', () => {
+    const mapaVazio = {
+      event_path: '$.event',
+      event_map: {},
+      contact: {},
+      fields: {},
+    }
+
+    it.each(['type', 'tipo', 'event_type', 'eventType', 'evento'])(
+      'acha o evento em `%s` mesmo com event_path apontando para $.event',
+      (chave) => {
+        const r = applyMapping({ [chave]: 'order.paid', id: 'x' }, mapaVazio)
+        expect(r.ok).toBe(true)
+        if (r.ok) expect(r.event.type).toBe('order.paid')
+      },
+    )
+
+    it('o caminho configurado continua tendo precedência sobre os nomes usuais', () => {
+      // Acrescentar a rede de reserva não pode mudar o que já funcionava: uma
+      // plataforma que manda os dois campos precisa continuar sendo lida pelo
+      // que foi configurado.
+      const r = applyMapping(
+        { event: 'order.paid', type: 'outra.coisa' },
+        { ...mapaVazio, event_path: '$.event' },
+      )
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.event.type).toBe('order.paid')
+    })
+
+    it('sem nome nenhum, a recusa diz que tentou os dois lugares', () => {
+      const r = applyMapping({ id: 'x' }, mapaVazio)
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.failure.reason).toBe('evento_ausente')
+        // "nenhum valor em $.event" sozinho deixa quem lê sem saber se o
+        // problema é o caminho configurado ou o corpo que chegou.
+        expect(r.failure.detail).toContain('nomes usuais')
+      }
+    })
+
+    it('e a tradução automática passa a rodar: payment-by-deposit vira order.paid', () => {
+      // É o caso real que motivou tudo isto — o nome chegava, o dicionário
+      // existia, e os dois nunca se encontravam.
+      const r = applyMapping({ type: 'payment-by-deposit', id: 'x' }, mapaVazio)
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.event.type).toBe('order.paid')
+    })
+  })
 })

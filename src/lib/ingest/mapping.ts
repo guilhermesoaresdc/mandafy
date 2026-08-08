@@ -158,6 +158,21 @@ export function applyMapping(payload: unknown, rawMapping: unknown): MappingResu
    */
   const bruto =
     comoTexto(getByPath(payload, mapping.event_path)) ??
+    /*
+     * OS NOMES USUAIS, ANTES DE DESISTIR.
+     *
+     * `event_path` é sempre `'$.event'` — é o `.default` do schema, gravado na
+     * criação de toda plataforma, e ninguém o edita porque a tela nem sugere
+     * que ele exista. Uma plataforma que escreve `{type: 'payment-by-deposit'}`
+     * caía em "nenhum valor em $.event" e TODOS os eventos eram recusados.
+     *
+     * `nomeDoEvento` já sabia procurar em `event`, `evento`, `type`, `tipo`,
+     * `event_type` e `eventType` — e era usada só para EXIBIR o nome na tela de
+     * quem estava configurando. O motor, que precisava dela para funcionar, não
+     * a consultava. Com esta linha a rede de tradução automática passa a rodar,
+     * e `payment-by-deposit` vira `order.paid` sem ninguém tocar em nada.
+     */
+    comoTexto(nomeDoEvento(payload)) ??
     comoTexto(getByPath(payload, `$.${CHAVE_EVENTO_NA_URL}`))
 
   if (!bruto) {
@@ -165,7 +180,10 @@ export function applyMapping(payload: unknown, rawMapping: unknown): MappingResu
       ok: false,
       failure: {
         reason: 'evento_ausente',
-        detail: `nenhum valor em ${mapping.event_path}`,
+        // O caminho configurado E os nomes tentados: sem os dois, a tela diz
+        // "nenhum valor em $.event" para um payload que também não tem `type`,
+        // e quem lê não sabe se o problema é o caminho ou o corpo.
+        detail: `nenhum valor em ${mapping.event_path} nem nos nomes usuais (event, type, tipo…)`,
       },
     }
   }
