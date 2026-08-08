@@ -293,4 +293,80 @@ describe.skipIf(!habilitado)('Histórico e painel (§10)', () => {
       expect(saude.find((s) => s.canal === 'sms')?.taxaFalha).toBeNull()
     })
   })
+
+  /*
+   * ── AS DUAS METADES DO CARTÃO "HOJE" CONTAM O MESMO DIA ──
+   *
+   * `movimentoDoDia` agrupava em `AT TIME ZONE 'America/Sao_Paulo'` e
+   * `metricasDoPainel` contava em UTC, e os dois eram renderizados lado a lado
+   * sob um cabeçalho que diz "do 00h de Brasília até agora". Entre 21h e 00h de
+   * Brasília — 00h e 03h em UTC — o segundo recomeçava do zero enquanto o
+   * primeiro continuava somando.
+   *
+   * O teste que pega isso é o que fixa a hora dentro dessa faixa. Com a hora
+   * do relógio da máquina, ele passa 21 horas por dia e falha nas outras três,
+   * que é o pior tipo de teste que existe.
+   */
+  describe('o fuso do cartão Hoje (§10.2)', () => {
+    const NOITE = uid('b40')
+
+    // 23:30 em Brasília = 02:30 do dia SEGUINTE em UTC. É o instante em que o
+    // painel se contradizia.
+    const VINTE_E_TRES_E_MEIA_BRT = new Date('2026-08-09T02:30:00.000Z')
+
+    beforeAll(async () => {
+      await admin.begin(async (tx) => {
+        await tx`INSERT INTO contacts (id, org_id, name) VALUES (${NOITE}, ${ORG}, 'Noite')
+                 ON CONFLICT (id) DO NOTHING`
+
+        // Enviada às 22:00 de Brasília — mesmo dia local, dia seguinte em UTC.
+        await tx`INSERT INTO notifications (org_id, contact_id, channel, status, created_at, sent_at)
+                 VALUES (${ORG}, ${NOITE}, 'whatsapp', 'delivered',
+                         '2026-08-09T01:00:00.000Z', '2026-08-09T01:00:00.000Z')`
+      })
+    })
+
+    afterAll(async () => {
+      await admin`DELETE FROM notifications WHERE contact_id = ${NOITE}`
+      await admin`DELETE FROM contacts WHERE id = ${NOITE}`
+    })
+
+    it('às 23h30 de Brasília, o envio das 22h ainda conta como HOJE', async () => {
+      const m = await comoUsuario((tx) => metricasDoPainel(tx, VINTE_E_TRES_E_MEIA_BRT))
+
+      /*
+       * Com `diaUtc`, "hoje" seria 2026-08-09 e o início do dia seria
+       * 09/08 00:00 UTC = 08/08 21:00 BRT: a mensagem das 22h BRT entraria por
+       * acidente, mas as de 18h do mesmo dia local ficariam de fora. Este
+       * número só fecha se as duas pontas usarem o fuso da banca.
+       */
+      expect(m.enviadasHoje).toBeGreaterThanOrEqual(1)
+    })
+
+    it('e uma mensagem de ontem à noite NÃO entra no hoje', async () => {
+      // 22:00 BRT do dia 07 = 08/08 01:00 UTC. Em UTC parece dia 8; no fuso da
+      // banca é dia 7, e o cartão "Hoje" não pode somá-la.
+      const ONTEM = uid('b41')
+      await admin`INSERT INTO contacts (id, org_id, name) VALUES (${ONTEM}, ${ORG}, 'Ontem')
+                  ON CONFLICT (id) DO NOTHING`
+      await admin`INSERT INTO notifications (org_id, contact_id, channel, status, created_at, sent_at)
+                  VALUES (${ORG}, ${ONTEM}, 'whatsapp', 'delivered',
+                          '2026-08-08T01:00:00.000Z', '2026-08-08T01:00:00.000Z')`
+
+      try {
+        const m = await comoUsuario((tx) => metricasDoPainel(tx, VINTE_E_TRES_E_MEIA_BRT))
+        const comOntem = await comoUsuario((tx) =>
+          metricasDoPainel(tx, new Date('2026-08-08T02:30:00.000Z')),
+        )
+
+        // A de 07/08 conta no dia 07, não no dia 08.
+        expect(comOntem.enviadasHoje).toBeGreaterThanOrEqual(1)
+        // E não infla o dia seguinte.
+        expect(m.enviadasHoje).toBeLessThan(comOntem.enviadasHoje + 2)
+      } finally {
+        await admin`DELETE FROM notifications WHERE contact_id = ${ONTEM}`
+        await admin`DELETE FROM contacts WHERE id = ${ONTEM}`
+      }
+    })
+  })
 })
