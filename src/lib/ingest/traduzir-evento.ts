@@ -78,6 +78,21 @@ export const DICIONARIO_DE_EVENTOS: Record<string, CanonicalEvent> = {
   'withdrawal-pending': 'withdrawal.pending',
   'withdraw-completed': 'withdrawal.completed',
   'withdrawal-completed': 'withdrawal.completed',
+  /*
+   * O terceiro `payment-by-*` da plataforma, visto chegando numa banca de
+   * verdade ao lado de `payment-by-deposit` e `payment-by-game`.
+   *
+   * Estava caindo na PISTA `withdraw`, que acerta o destino — e palpite não
+   * dispara sozinho, por projeto. Só que aqui não há o que confirmar: o nome é
+   * conhecido, vem da mesma família dos outros dois, e deixá-lo esperando um
+   * clique é pedir confirmação de algo que já sabemos.
+   *
+   * Vai para `completed`, e não `pending`: a plataforma dispara quando o
+   * dinheiro SAI. Mandar "estamos processando seu saque" depois de pago é pior
+   * do que não mandar nada.
+   */
+  'payment-by-withdraw': 'withdrawal.completed',
+  'payment-by-withdrawal': 'withdrawal.completed',
   'campaign-created': 'campaign.created',
   'draw-created': 'campaign.created',
 

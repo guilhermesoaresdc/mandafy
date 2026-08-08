@@ -32,6 +32,21 @@ describe('traduzir nome de evento', () => {
     expect(traducaoAutomatica('payment-by-game')).toBe('ticket.awarded')
   })
 
+  it('o saque da mesma família também dispara sozinho', () => {
+    /*
+     * `payment-by-withdraw` chegou junto com os outros dois `payment-by-*` numa
+     * banca de verdade. A PISTA `withdraw` já acertava o destino — mas pista
+     * vira palpite, e palpite espera um clique por projeto. Aqui não há o que
+     * confirmar: o nome é conhecido, e pedir confirmação do que já se sabe é o
+     * trabalho manual que este arquivo existe para remover.
+     */
+    expect(traducaoAutomatica('payment-by-withdraw')).toBe('withdrawal.completed')
+    expect(traduzirNomeDeEvento('payment-by-withdraw').origem).toBe('dicionario')
+
+    // A grafia varia entre plataformas; as duas são o mesmo evento.
+    expect(traducaoAutomatica('payment-by-withdrawal')).toBe('withdrawal.completed')
+  })
+
   it('caixa e separador não decidem se um evento dispara', () => {
     for (const escrita of ['New-User', 'new_user', 'NEW USER', ' new-user ', 'New.User']) {
       expect(traduzirNomeDeEvento(escrita).canonico, escrita).toBe('user.created')
