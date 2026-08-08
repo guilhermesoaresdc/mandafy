@@ -23,9 +23,29 @@ async function chamar(headers: Record<string, string>) {
   return { status: resposta.status, corpo: (await resposta.json()) as Record<string, unknown> }
 }
 
+/**
+ * O resto do ambiente, com valores descartáveis.
+ *
+ * `autorizar` lê o segredo por `serverEnv()`, que valida o ambiente INTEIRO de
+ * uma vez — então faltar `DATABASE_URL` derrubava os sete casos deste arquivo
+ * com um erro de configuração, antes de a rota chegar a decidir qualquer coisa.
+ * O `npm test` do CI roda sem `.env`, e era ali que a suíte vinha vermelha.
+ *
+ * Nada aqui é usado: este arquivo não abre banco, fila nem cifra coisa alguma.
+ * São só os campos que o esquema exige para deixar `serverEnv()` passar.
+ */
+const AMBIENTE_MINIMO = {
+  APP_URL: 'https://exemplo.test',
+  SESSION_SECRET: 'x'.repeat(64),
+  ENCRYPTION_KEY: 'a'.repeat(64),
+  DATABASE_URL: 'postgres://ninguem:ninguem@127.0.0.1:5432/nada',
+  REDIS_URL: 'redis://127.0.0.1:6379',
+}
+
 describe('§7.1 — autenticação do batimento', () => {
   beforeEach(() => {
     vi.resetModules()
+    for (const [chave, valor] of Object.entries(AMBIENTE_MINIMO)) vi.stubEnv(chave, valor)
     process.env.CRON_SECRET = SEGREDO
   })
 
