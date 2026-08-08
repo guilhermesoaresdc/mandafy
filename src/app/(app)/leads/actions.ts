@@ -1,11 +1,11 @@
 'use server'
 
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { withTenant } from '@/db'
 import { cargaPorConsultor, consultoresAtivos, detalharLead } from '@/db/queries/leads'
-import { leadActivities, leads, pipelineStages } from '@/db/schema'
+import { leadActivities, leads, pipelines, pipelineStages } from '@/db/schema'
 import { LEAD_STATUSES } from '@/db/schema/enums'
 import { requireUser, tenantOf } from '@/lib/auth/current'
 import { assertCan, can } from '@/lib/rbac'
@@ -213,12 +213,51 @@ export async function mudarStatusAction(
   if (!parsed.success) return { erro: 'Dados inválidos.' }
 
   await withTenant(tenantOf(user), async (tx) => {
+    /*
+     * O STATUS E A ETAPA ANDAM JUNTOS — e não andavam.
+     *
+     * "Ganhou" gravava `status = 'ganho'` e deixava o lead na etapa em que ele
+     * estava. Como o funil lista só quem está `aberto`, o lead sumia da tela
+     * inteira: a coluna "Ganho" ficava em "Vazio." para sempre, e o único número
+     * que o dono abre o funil para ver — quanto fechou — não existia.
+     *
+     * `moverLeadAction` já fazia o inverso certo: escolher a etapa deriva o
+     * status dela (`isWon`/`isLost`). Faltava o caminho de volta.
+     *
+     * A etapa é procurada por `is_won`/`is_lost`, e não por nome: "Ganho",
+     * "Fechado" e "Pago" são o mesmo conceito em funis diferentes, e casar por
+     * texto quebraria no primeiro funil renomeado.
+     */
+    const agora = new Date()
+    const alvo =
+      parsed.data.status === 'aberto'
+        ? null
+        : (
+            await tx
+              .select({ id: pipelineStages.id })
+              .from(pipelineStages)
+              .innerJoin(pipelines, eq(pipelines.id, pipelineStages.pipelineId))
+              .where(
+                and(
+                  eq(pipelines.orgId, user.orgId),
+                  parsed.data.status === 'ganho'
+                    ? eq(pipelineStages.isWon, true)
+                    : eq(pipelineStages.isLost, true),
+                ),
+              )
+              .orderBy(asc(pipelineStages.position))
+              .limit(1)
+          )[0]?.id
+
     await tx
       .update(leads)
       .set({
         status: parsed.data.status,
         lostReason: parsed.data.status === 'perdido' ? (parsed.data.motivo ?? null) : null,
-        updatedAt: new Date(),
+        // Sem etapa correspondente no funil, o status ainda vale: um funil sem
+        // coluna de perda não pode impedir alguém de marcar uma perda.
+        ...(alvo ? { stageId: alvo, stageChangedAt: agora } : {}),
+        updatedAt: agora,
       })
       .where(and(eq(leads.id, parsed.data.leadId), eq(leads.orgId, user.orgId)))
   })

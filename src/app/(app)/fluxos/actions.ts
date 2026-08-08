@@ -189,6 +189,16 @@ const passoSchema = z.object({
   stepId: z.uuid(),
   flowId: z.uuid(),
   atraso: z.string().trim().max(20),
+  /**
+   * O número exato, quando o campo de tempo não foi tocado.
+   *
+   * O texto do campo é uma aproximação do que está gravado — "1.6h" para 5700
+   * segundos —, e reler essa aproximação devolvia 5760. Abrir um passo e salvar
+   * sem mexer no tempo empurrava a cadência um minuto, toda vez. Quando este
+   * campo vem, ele vence o texto; a partir da primeira tecla a tela para de
+   * mandá-lo e o texto passa a ser a verdade.
+   */
+  atrasoSegundos: z.coerce.number().int().min(0).max(365 * 86400).optional(),
   /** Vazio = sem hora marcada; o passo sai no instante da cascata. */
   hora: z.string().trim().max(5),
   /** Ausente = não mexer na mensagem — o formulário sempre manda, mas a API é usada por gente. */
@@ -206,12 +216,15 @@ export async function salvarPassoAction(
     stepId: formData.get('stepId'),
     flowId: formData.get('flowId'),
     atraso: formData.get('atraso') ?? '0',
+    ...(formData.get('atrasoSegundos') !== null
+      ? { atrasoSegundos: formData.get('atrasoSegundos') }
+      : {}),
     hora: formData.get('hora') ?? '',
     ...(formData.get('messageId') ? { messageId: formData.get('messageId') } : {}),
   })
   if (!parsed.success) return { erro: 'Dados inválidos.' }
 
-  const segundos = lerAtraso(parsed.data.atraso)
+  const segundos = parsed.data.atrasoSegundos ?? lerAtraso(parsed.data.atraso)
   if (segundos === null) {
     return { erro: 'Não entendi o tempo. Use algo como 5min, 2h ou 3 dias.' }
   }
@@ -308,6 +321,7 @@ export async function adicionarPassoAction(
   })
   if (!parsed.success) return { erro: 'Dados inválidos.' }
 
+  // Passo novo nasce do texto, e só dele: não há número gravado para preservar.
   const segundos = lerAtraso(parsed.data.atraso)
   if (segundos === null) {
     return { erro: 'Não entendi o tempo. Use algo como 5min, 2h ou 3 dias.' }
