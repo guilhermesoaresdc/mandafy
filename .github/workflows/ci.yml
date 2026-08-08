@@ -57,6 +57,23 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # Redis, porque metade das suítes de banco ENFILEIRA de verdade.
+      #
+      # `disparo-lote.test.ts` chama `enfileirarLote`, que fala com o BullMQ —
+      # não é mock, é o caminho real, e é isso que faz o teste valer. Sem um
+      # Redis de pé, o ioredis não falha: ele RECONECTA, com backoff, em
+      # silêncio. O teste não quebra com "conexão recusada" — ele fica parado
+      # até o vitest desistir aos 5 segundos, e depois cada hook seguinte
+      # estoura em cascata. Um erro que se disfarça de lentidão.
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -117,3 +134,4 @@ jobs:
         env:
           TEST_DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
           TEST_DATABASE_URL: postgresql://mandafy_app:mandafy_app@localhost:5432/mandafy
+          REDIS_URL: redis://localhost:6379
