@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   CHANNEL_COLOR_VAR,
   CHANNEL_SHORT,
@@ -163,22 +164,72 @@ const COLUNAS = [
   },
 ] as const
 
+/** A query da busca, preservando o que já está na URL não seria útil aqui: uma
+ * pesquisa nova é uma pergunta nova, e carregar o filtro anterior faria a tela
+ * responder "não achei" por causa de um recorte que a pessoa esqueceu que pôs. */
+function paraQuery(busca: string): string {
+  return new URLSearchParams({ busca: busca.trim() }).toString()
+}
+
+/**
+ * As duas perguntas que se faz a esta tela.
+ *
+ * `dead` é "falhou e ninguém vai tentar de novo" e `failed` é "falhou e ainda
+ * tem chance": a distinção importa para o motor e não para quem procura o que
+ * não chegou. `skipped` entra junto porque, para quem pergunta, uma mensagem
+ * barrada por regra também não chegou — muda o motivo, não o fato.
+ */
+const ATALHOS_DE_STATUS = [
+  { rotulo: 'Deu errado', status: ['failed', 'dead', 'skipped'] as NotificationStatus[] },
+  { rotulo: 'Ainda não saiu', status: ['queued', 'scheduled'] as NotificationStatus[] },
+] as const
+
 export function LogAoVivo({
   inicial,
+  total,
   podeReenviar,
+  canaisIniciais,
+  statusIniciais,
+  buscaInicial,
 }: {
   inicial: LinhaLog[]
+  /** Quantas linhas o filtro tem no BANCO — não quantas couberam na tela. */
+  total: number
   podeReenviar: boolean
+  /** O filtro veio na URL: é assim que um alerta do painel aponta para cá. */
+  canaisIniciais: Channel[] | null
+  statusIniciais: NotificationStatus[] | null
+  buscaInicial: string
 }) {
+  const router = useRouter()
   const [linhas, setLinhas] = useState<LinhaLog[]>(inicial)
-  const [canais, setCanais] = useState<Set<Channel>>(new Set(CHANNELS))
-  const [status, setStatus] = useState<Set<NotificationStatus>>(new Set())
-  const [busca, setBusca] = useState('')
+  const [canais, setCanais] = useState<Set<Channel>>(new Set(canaisIniciais ?? CHANNELS))
+  const [status, setStatus] = useState<Set<NotificationStatus>>(new Set(statusIniciais ?? []))
+  /*
+   * `busca` é o que está sendo DIGITADO; `buscaInicial` é o que já foi
+   * perguntado ao banco. São coisas diferentes e a distinção conserta dois
+   * defeitos de uma vez: a conexão ao vivo passa a depender da busca enviada
+   * (e não reabre a cada tecla) e a caixa continua refinando na hora o que já
+   * está na tela, sem esperar ida e volta.
+   */
+  const [busca, setBusca] = useState(buscaInicial)
   const [aoVivo, setAoVivo] = useState(true)
   const [conectado, setConectado] = useState(false)
   const [aberta, setAberta] = useState<LinhaLog | null>(null)
 
   const fonteRef = useRef<EventSource | null>(null)
+
+  /*
+   * Navegação para o mesmo caminho com outra query traz linhas novas por props,
+   * e o React mantém o estado do componente. Sem isto, filtrar pela URL não
+   * mudaria nada na tela — que é o defeito exato que estamos consertando.
+   */
+  useEffect(() => {
+    setLinhas(inicial)
+    setBusca(buscaInicial)
+    setCanais(new Set(canaisIniciais ?? CHANNELS))
+    setStatus(new Set(statusIniciais ?? []))
+  }, [inicial, buscaInicial, canaisIniciais, statusIniciais])
 
   /** Mescla por id: uma linha que mudou de status substitui a antiga. */
   const mesclar = useCallback((novas: LinhaLog[]) => {
@@ -207,7 +258,7 @@ export function LogAoVivo({
       params.set('canais', [...canais].join(','))
     }
     if (status.size > 0) params.set('status', [...status].join(','))
-    if (busca.trim() !== '') params.set('busca', busca.trim())
+    if (buscaInicial.trim() !== '') params.set('busca', buscaInicial.trim())
 
     const fonte = new EventSource(`/api/historico/stream?${params}`)
     fonteRef.current = fonte
@@ -227,10 +278,14 @@ export function LogAoVivo({
       fonte.close()
       fonteRef.current = null
     }
-    // `busca` fora das dependências de propósito: reabrir a conexão a cada
-    // tecla digitada criaria e derrubaria uma conexão por caractere. O filtro
-    // de texto é aplicado no cliente, sobre o que já está na tela.
-  }, [aoVivo, canais, status, mesclar, busca])
+    /*
+     * `buscaInicial` e não `busca`: o comentário antigo jurava que a busca
+     * estava fora das dependências para não derrubar a conexão a cada tecla —
+     * e ela estava DENTRO, então o navegador abria e fechava uma conexão por
+     * caractere digitado. Agora depende do que foi enviado, que muda uma vez
+     * por pesquisa, e a promessa do comentário passa a ser verdade.
+     */
+  }, [aoVivo, canais, status, mesclar, buscaInicial])
 
   const visiveis = useMemo(() => {
     const termo = busca.trim().toLowerCase()
@@ -284,8 +339,45 @@ export function LogAoVivo({
             ))}
           </div>
 
+          {/*
+            DOIS CHIPS NO LUGAR DE DEZ OPÇÕES.
+
+            O select listava os dez status do banco — "na fila", "agendada",
+            "enviando", "enviada", "entregue", "lida", "falhou", "morta",
+            "cancelada", "pulada" — e pedia que a pessoa soubesse a diferença
+            entre "falhou" e "morta", entre "cancelada" e "pulada", para achar
+            o que procura. São duas perguntas de verdade, e cada uma junta
+            vários status: o que deu errado, e o que ainda não saiu.
+
+            O select continua embaixo para quem quiser um status específico —
+            o atalho não tira o caminho, adianta os dois casos comuns.
+          */}
+          <div className="flex items-center gap-1">
+            {ATALHOS_DE_STATUS.map((atalho) => {
+              const ligado =
+                status.size === atalho.status.length &&
+                atalho.status.every((s) => status.has(s))
+              return (
+                <button
+                  key={atalho.rotulo}
+                  type="button"
+                  onClick={() => setStatus(ligado ? new Set() : new Set(atalho.status))}
+                  aria-pressed={ligado}
+                  className={cn(
+                    'rounded border px-2 py-2 text-2xs transition-colors md:py-0.5',
+                    ligado
+                      ? 'border-ink bg-surface text-ink'
+                      : 'border-line text-ink-2 hover:text-ink',
+                  )}
+                >
+                  {atalho.rotulo}
+                </button>
+              )
+            })}
+          </div>
+
           <select
-            value={[...status][0] ?? ''}
+            value={status.size === 1 ? ([...status][0] ?? '') : ''}
             onChange={(e) =>
               setStatus(e.target.value === '' ? new Set() : new Set([e.target.value as NotificationStatus]))
             }
@@ -300,14 +392,35 @@ export function LogAoVivo({
             ))}
           </select>
 
-          <input
-            type="search"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar contato ou mensagem…"
-            aria-label="Buscar"
-            className="min-w-32 flex-1 rounded border border-line bg-surface px-2 py-0.5 text-2xs text-ink outline-none placeholder:text-pending focus-visible:border-ink"
-          />
+          {/*
+            A BUSCA VAI AO BANCO, e não só ao que está na tela.
+
+            A mesma caixa procurava na base inteira quando alguém baixava a
+            planilha — o link do CSV manda `busca` ao servidor, que faz ILIKE em
+            nome, telefone e e-mail — e em 200 linhas quando olhava a tela.
+            Duas respostas para a mesma pergunta, e a da tela era a errada:
+            "não achei" queria dizer "não estava nas 200 primeiras".
+
+            Enter envia; enquanto digita, refina o que já está carregado. Os
+            dois comportamentos convivem porque servem a momentos diferentes —
+            um é procurar, o outro é olhar melhor.
+          */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              router.push(busca.trim() ? `/historico?${paraQuery(busca)}` : '/historico')
+            }}
+            className="flex min-w-32 flex-1 items-center gap-1"
+          >
+            <input
+              type="search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar e apertar Enter…"
+              aria-label="Buscar contato ou mensagem"
+              className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 text-2xs text-ink outline-none placeholder:text-pending focus-visible:border-ink"
+            />
+          </form>
 
           <a
             href={`/api/historico/csv?${new URLSearchParams({
@@ -471,8 +584,24 @@ export function LogAoVivo({
         )}
       </div>
 
+      {/*
+        O RODAPÉ DIZ O QUE ESTÁ ACONTECENDO.
+
+        Ele imprimia "200 de 200" — o mesmo número dos dois lados, sempre,
+        porque media o array carregado contra ele mesmo. Numa base de cinco mil,
+        a tela afirmava estar mostrando tudo enquanto mostrava 4%. É a diferença
+        entre "não existe" e "não estava nas primeiras 200", e quem lê o rodapé
+        está justamente tentando decidir qual das duas é.
+      */}
       <p className="text-2xs text-pending">
-        {visiveis.length} de {linhas.length} linha(s) · 3 dias na camada quente
+        {visiveis.length} de {linhas.length} carregada(s)
+        {total > linhas.length ? (
+          <>
+            {' '}
+            · <span className="text-ink-2">{total} no filtro</span> — a busca procura em todas
+          </>
+        ) : null}{' '}
+        · 3 dias na camada quente
       </p>
 
       {aberta ? (

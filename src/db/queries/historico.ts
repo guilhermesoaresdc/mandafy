@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { Tx } from '@/db'
 import { contacts, messages, notifications } from '@/db/schema'
 import { CHANNELS, NOTIFICATION_STATUSES, type Channel, type NotificationStatus } from '@/db/schema/enums'
@@ -10,6 +10,25 @@ import { CHANNELS, NOTIFICATION_STATUSES, type Channel, type NotificationStatus 
  * recorte de tempo — sem ele o Postgres varreria todas as partições, e o alvo
  * de 200ms de §13.1 morre na primeira semana de operação.
  */
+
+/**
+ * Lê uma lista de um `searchParams` ou de uma query string, descartando o que
+ * não existe.
+ *
+ * Mora AQUI e não na rota SSE porque agora há três leitores do mesmo filtro —
+ * a página, a rota de eventos e o link do CSV — e dois validadores para o mesmo
+ * parâmetro é como duas telas passam a discordar sobre o que `status=falhou`
+ * quer dizer. Devolve `undefined` quando não sobra nada válido: filtro vazio é
+ * ausência de filtro, não filtro que não casa com nada.
+ */
+export function paramLista<T extends string>(
+  valor: string | null | undefined,
+  validos: readonly T[],
+): T[] | undefined {
+  if (!valor) return undefined
+  const itens = valor.split(',').filter((v): v is T => (validos as readonly string[]).includes(v))
+  return itens.length > 0 ? itens : undefined
+}
 
 export type FiltroHistorico = {
   canais?: readonly Channel[]
@@ -130,6 +149,27 @@ export async function listarHistorico(
     errorCode: linha.errorCode,
     latenciaMs: latencia(linha.attemptedAt, linha.sentAt, linha.deliveredAt),
   }))
+}
+
+/**
+ * QUANTAS LINHAS EXISTEM, e não quantas couberam.
+ *
+ * O rodapé imprimia "200 de 200" porque contava o que tinha na memória do
+ * navegador — o mesmo número dos dois lados da frase, sempre, qualquer que
+ * fosse o tamanho da operação. Uma tela que não sabe dizer que está mostrando
+ * uma fatia é uma tela em que "não achei" e "não existe" viram a mesma coisa.
+ */
+export async function contarHistorico(
+  tx: Tx,
+  filtro: FiltroHistorico = {},
+  agora = new Date(),
+): Promise<number> {
+  const [linha] = await tx
+    .select({ total: count() })
+    .from(notifications)
+    .where(and(...condicoes(filtro, agora)))
+
+  return linha?.total ?? 0
 }
 
 /**

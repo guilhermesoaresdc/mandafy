@@ -50,12 +50,15 @@ function quando(iso: string | null): string {
 
 export function TabelaLeads({
   linhas,
+  total,
   consultores,
   podeReatribuir,
   mensagens,
   podeEnviar,
 }: {
   linhas: LinhaLead[]
+  /** Quantos leads o filtro tem no BANCO — não quantos couberam na tela. */
+  total: number
   consultores: { id: string; name: string }[]
   podeReatribuir: boolean
   /** Mensagens ativas, para o disparo em lote. */
@@ -166,8 +169,18 @@ export function TabelaLeads({
         ) : null}
 
         {selecionados.size > 0 && podeEnviar ? (
+          /*
+            O BOTÃO DIZ QUANTOS.
+
+            "Enviar mensagem" com 1.000 marcados numa base de 5.000 é a frase
+            mais cara desta tela: quem clicou em "Selecionar todos" acredita ter
+            marcado todo mundo, o disparo confirma, e quatro mil clientes nunca
+            souberam de nada. O número no botão é a única coisa entre a
+            intenção e o resultado.
+          */
           <Button size="sm" onClick={() => setDisparando(true)}>
-            Enviar mensagem
+            Enviar para {selecionados.size}
+            {total > linhas.length ? ` (de ${total} no filtro)` : ''}
           </Button>
         ) : null}
 
@@ -234,7 +247,7 @@ export function TabelaLeads({
               onChange={(e) =>
                 setSelecionados(e.target.checked ? new Set(visiveis.map((l) => l.id)) : new Set())
               }
-              aria-label="Selecionar todos"
+              aria-label={`Selecionar os ${visiveis.length} leads carregados`}
               className="size-3 accent-ink"
             />
           ) : null}
@@ -321,7 +334,8 @@ export function TabelaLeads({
       </div>
 
       <p className="text-2xs text-pending">
-        {visiveis.length} de {linhas.length} lead(s)
+        {visiveis.length} de {linhas.length} carregado(s)
+        {total > linhas.length ? ` · ${total} no filtro` : ''}
         {selecionados.size > 0 ? ` · ${selecionados.size} selecionado(s)` : ''}
       </p>
 

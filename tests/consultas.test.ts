@@ -8,6 +8,8 @@ import { listarPlataformas } from '@/db/queries/sources'
 import { buscarMensagem, chaveEmUso, listarMensagens } from '@/db/queries/messages'
 import { buscarFluxo, listarFluxos } from '@/db/queries/flows'
 import { eventosPorTipo, resumoNoAr } from '@/db/queries/no-ar'
+import { contarHistorico, listarHistorico, paramLista } from '@/db/queries/historico'
+import { CHANNELS } from '@/db/schema/enums'
 
 /**
  * Consultas das telas, EXECUTADAS contra um Postgres de verdade.
@@ -402,6 +404,97 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
         await admin`DELETE FROM flows WHERE id = ${outroFluxo}`
         await admin`DELETE FROM organizations WHERE id = ${outraOrg}`
       }
+    })
+  })
+
+  /*
+   * ── O HISTÓRICO CONTA O QUE EXISTE, E NÃO O QUE COUBE ──
+   *
+   * O rodapé imprimia "200 de 200": o mesmo número dos dois lados, sempre,
+   * porque media o array carregado contra ele mesmo. Numa base grande, a tela
+   * afirmava mostrar tudo enquanto mostrava uma fatia — e "não achei" passava a
+   * significar "não estava nas primeiras 200".
+   *
+   * `contarHistorico` só serve se contar MAIS que a fatia e se respeitar os
+   * mesmos filtros. Um teste que criasse três linhas e conferisse "3" passaria
+   * com a consulta ignorando o filtro inteiro.
+   */
+  describe('histórico: contagem e filtros (§10.1)', () => {
+    const CONTATO = uid('c30')
+
+    beforeAll(async () => {
+      await admin.begin(async (tx) => {
+        await tx`INSERT INTO contacts (id, org_id, name, phone_e164) VALUES
+          (${CONTATO}, ${ORG}, 'Contagem', '+5511977776666')
+          ON CONFLICT (id) DO NOTHING`
+
+        // 5 de WhatsApp entregues e 3 de SMS falhadas: nenhum filtro consegue
+        // devolver o mesmo número que outro por acidente.
+        for (let i = 0; i < 5; i += 1) {
+          await tx`INSERT INTO notifications (org_id, contact_id, channel, status)
+                   VALUES (${ORG}, ${CONTATO}, 'whatsapp', 'delivered')`
+        }
+        for (let i = 0; i < 3; i += 1) {
+          await tx`INSERT INTO notifications (org_id, contact_id, channel, status)
+                   VALUES (${ORG}, ${CONTATO}, 'sms', 'failed')`
+        }
+      })
+    })
+
+    afterAll(async () => {
+      await admin`DELETE FROM notifications WHERE contact_id = ${CONTATO}`
+      await admin`DELETE FROM contacts WHERE id = ${CONTATO}`
+    })
+
+    it('conta tudo, e a lista limitada traz menos que a contagem', async () => {
+      const { total, linhas } = await comoUsuario(async (tx) => ({
+        total: await contarHistorico(tx),
+        linhas: await listarHistorico(tx, { limite: 3 }),
+      }))
+
+      expect(total).toBe(8)
+      // É esta desigualdade que o rodapé precisa saber exprimir.
+      expect(linhas.length).toBe(3)
+      expect(total).toBeGreaterThan(linhas.length)
+    })
+
+    it('conta com o filtro de canal', async () => {
+      const total = await comoUsuario((tx) => contarHistorico(tx, { canais: ['whatsapp'] }))
+      expect(total).toBe(5)
+    })
+
+    it('conta com o filtro de status', async () => {
+      const total = await comoUsuario((tx) => contarHistorico(tx, { status: ['failed'] }))
+      expect(total).toBe(3)
+    })
+
+    it('canal e status juntos se acumulam, e não se substituem', async () => {
+      // WhatsApp entregue existe; WhatsApp falhado, não. Um filtro que
+      // sobrescrevesse o outro devolveria 5 ou 3 aqui.
+      const total = await comoUsuario((tx) =>
+        contarHistorico(tx, { canais: ['whatsapp'], status: ['failed'] }),
+      )
+      expect(total).toBe(0)
+    })
+
+    it('a busca do rodapé é a mesma busca do CSV: vai ao banco', async () => {
+      const achou = await comoUsuario((tx) => contarHistorico(tx, { busca: 'Contagem' }))
+      expect(achou).toBe(8)
+
+      const nada = await comoUsuario((tx) => contarHistorico(tx, { busca: 'ninguém com este nome' }))
+      expect(nada).toBe(0)
+    })
+  })
+
+  describe('paramLista', () => {
+    it('descarta o que não existe e devolve undefined quando não sobra nada', () => {
+      expect(paramLista('whatsapp,sms', CHANNELS)).toEqual(['whatsapp', 'sms'])
+      expect(paramLista('whatsapp,pombo-correio', CHANNELS)).toEqual(['whatsapp'])
+      // Filtro vazio é ausência de filtro, não filtro que não casa com nada —
+      // a diferença entre "mostra tudo" e "mostra uma tela em branco".
+      expect(paramLista('pombo-correio', CHANNELS)).toBeUndefined()
+      expect(paramLista('', CHANNELS)).toBeUndefined()
+      expect(paramLista(null, CHANNELS)).toBeUndefined()
     })
   })
 })

@@ -277,6 +277,9 @@ export default async function PainelPage() {
               hint={
                 metricas.naFila > 0 ? `${formatNumber(metricas.naFila)} ainda na fila` : 'fila vazia'
               }
+              {...(metricas.naFila > 0
+                ? { href: '/historico?status=queued,scheduled' }
+                : {})}
             />
             <Stat
               label="Taxa de entrega"
@@ -286,6 +289,9 @@ export default async function PainelPage() {
                   ? `${formatNumber(metricas.falhas24h)} falha(s) em 24h`
                   : 'sem falhas em 24h'
               }
+              {...(metricas.falhas24h > 0
+                ? { href: '/historico?status=failed,dead&horas=24' }
+                : {})}
               tone={
                 metricas.falhas24h > 0
                   ? 'fail'

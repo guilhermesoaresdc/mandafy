@@ -22,6 +22,15 @@ import { TabelaLeads, type LinhaLead } from './tabela'
 export const metadata: Metadata = { title: 'Leads · Mandafy' }
 export const dynamic = 'force-dynamic'
 
+/**
+ * Quantos leads a tela carrega de uma vez.
+ *
+ * Era um `1000` solto repetido em dois lugares — e mudar um sem o outro faria
+ * a lista e a contagem discordarem em silêncio, que é exatamente o defeito que
+ * este commit conserta.
+ */
+const LIMITE = 1000
+
 function ehFiltroSalvo(valor: string | undefined): valor is FiltroSalvo {
   return FILTROS_SALVOS.some((f) => f.chave === valor)
 }
@@ -36,13 +45,22 @@ export default async function LeadsPage({
 
   // Consultor não vê os filtros de outra pessoa; o RLS já limita o resultado,
   // isto só define o recorte pedido.
-  const filtro: FiltroLeads = ehFiltroSalvo(chave) ? filtroSalvo(chave, user.id) : { limite: 1000 }
+  const filtro: FiltroLeads = ehFiltroSalvo(chave) ? filtroSalvo(chave, user.id) : {}
 
   const { linhas, total, consultores, novos, mensagens } = await withTenant(
     tenantOf(user),
     async (tx) => ({
-      linhas: await listarLeads(tx, { ...filtro, limite: 1000 }),
-      total: await contarLeads(tx),
+      linhas: await listarLeads(tx, { ...filtro, limite: LIMITE }),
+      /*
+       * A contagem passa a usar O MESMO FILTRO da lista.
+       *
+       * Ela contava a organização inteira enquanto a tabela mostrava um
+       * recorte, e os dois números apareciam lado a lado como se falassem da
+       * mesma coisa: "Leads 5.000" no alto, "1.000 de 1.000" no rodapé. Um dos
+       * dois estava sempre errado, dependendo de qual pergunta a pessoa
+       * achasse que estava fazendo.
+       */
+      total: await contarLeads(tx, filtro),
       consultores: user.isAdmin ? await consultoresAtivos(tx, user.orgId) : [],
       novos: await novosLeads(tx),
       mensagens: await listarMensagensParaDisparo(tx),
@@ -136,6 +154,7 @@ export default async function LeadsPage({
 
         <TabelaLeads
           linhas={paraTabela}
+          total={total}
           consultores={consultores}
           podeReatribuir={can(user, 'leads.reatribuir')}
           mensagens={mensagens}
