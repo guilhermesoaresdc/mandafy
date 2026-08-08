@@ -3,6 +3,9 @@ import type { Tx } from '@/db'
 import { messages, messageVariants } from '@/db/schema'
 import { CHANNELS, type Channel, type MessageCategory } from '@/db/schema/enums'
 import type { Message, MessageVariant } from '@/db/schema/messages'
+import { compilar } from '@/lib/messages/compile'
+import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
+import { sementeDeTexto } from '@/lib/messages/spintax'
 
 /**
  * Consultas das mensagens (§3.4, §6.1).
@@ -22,9 +25,46 @@ export type MensagemResumo = {
   canaisAtivos: Channel[]
   /** Quantas variantes o autor customizou; o resto segue o corpo principal. */
   customizadas: number
+  /**
+   * As primeiras palavras do texto, já compiladas com o contato de exemplo.
+   *
+   * A lista mostrava nome, categoria e canais — tudo sobre a mensagem, nada
+   * DELA. Para saber o que uma mensagem diz era preciso abrir uma tela por
+   * mensagem, e "Lembrete de PIX — 5 minutos" não conta se o texto ainda fala
+   * de rifa ou se está em branco.
+   */
+  amostra: string
 }
 
 export type MensagemCompleta = { mensagem: Message; variantes: MessageVariant[] }
+
+/**
+ * A primeira linha do texto, compilada com o contato de exemplo.
+ *
+ * Mesma ideia de `amostraDe` em `queries/flows.ts`, e de propósito NÃO
+ * compartilhada: aquela usa a semente do passo, esta usa a da mensagem, e
+ * juntá-las num utilitário exigiria um parâmetro a mais só para as duas
+ * chamadas continuarem fazendo o que já faziam.
+ *
+ * A semente fixa importa: com spintax, `{Oi|Olá|E aí}` sortearia uma saudação
+ * diferente a cada carregamento da lista, e a mesma mensagem pareceria mudar
+ * sozinha entre dois F5.
+ */
+function amostraDeTexto(corpo: string, semente: string): string {
+  if (!corpo.trim()) return ''
+
+  const compilada = compilar(corpo, {
+    canal: 'whatsapp',
+    dados: CONTATO_EXEMPLO,
+    semente: sementeDeTexto(semente),
+    previa: true,
+  })
+
+  return (compilada.ok ? compilada.corpo : corpo)
+    .replace(/[*_~]/g, '')
+    .replace(/\s*\n+\s*/g, ' ')
+    .trim()
+}
 
 export async function listarMensagens(tx: Tx): Promise<MensagemResumo[]> {
   const linhas = await tx
@@ -35,6 +75,7 @@ export async function listarMensagens(tx: Tx): Promise<MensagemResumo[]> {
       category: messages.category,
       active: messages.active,
       updatedAt: messages.updatedAt,
+      body: messages.body,
     })
     .from(messages)
     .orderBy(desc(messages.updatedAt))
@@ -60,12 +101,19 @@ export async function listarMensagens(tx: Tx): Promise<MensagemResumo[]> {
 
   return linhas.map((linha) => {
     const agregado = porMensagem.get(linha.id)
+    const { body, ...semCorpo } = linha
     return {
-      ...linha,
+      ...semCorpo,
       // Ordem canônica, não a que o banco devolveu: a fileira de pads tem de
       // ficar no mesmo lugar em todas as linhas da lista.
       canaisAtivos: CHANNELS.filter((c) => agregado?.ativos.has(c)),
       customizadas: agregado?.customizadas ?? 0,
+      /*
+       * O corpo CRU não sai daqui: `amostra` é o que a lista mostra, e mandar
+       * o texto inteiro de cada mensagem para o navegador só para cortá-lo lá
+       * seria pagar o transporte de um editor para desenhar uma linha.
+       */
+      amostra: amostraDeTexto(body, linha.id),
     }
   })
 }

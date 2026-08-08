@@ -61,6 +61,20 @@ export default async function MensagensPage() {
                   <p className="mt-0.5 text-2xs text-pending" title={mensagem.key}>
                     {MESSAGE_CATEGORY_LABELS[mensagem.category]}
                   </p>
+
+                  {/*
+                    O TEXTO, e não só o nome.
+
+                    A lista mostrava nome, categoria e canais — tudo SOBRE a
+                    mensagem, nada DELA. Saber o que uma mensagem diz custava
+                    uma tela por mensagem, e "Lembrete de PIX — 5 minutos" não
+                    conta se o texto ainda fala de rifa ou se está em branco.
+                  */}
+                  {mensagem.amostra ? (
+                    <p className="mt-1 truncate text-2xs text-ink-2">{mensagem.amostra}</p>
+                  ) : (
+                    <p className="mt-1 text-2xs text-fail">Sem texto — não vai sair nada.</p>
+                  )}
                 </div>
 
                 {/*

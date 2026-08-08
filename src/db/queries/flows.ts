@@ -84,6 +84,23 @@ export type PassoResumo = {
   ritmo: string | null
 }
 
+/**
+ * Um passo, do jeito que a LISTA precisa dele.
+ *
+ * Enxuto de propósito: `PassoResumo` traz corpo cru, canais, ritmo e contagem
+ * de reúso — tudo que o editor usa e nada que um cartão de lista mostre. Nove
+ * fluxos carregando o pacote inteiro seria pagar o custo do editor treze vezes
+ * para desenhar treze linhas de texto.
+ */
+export type PassoNaLista = {
+  /** `+5 min` — acumulado desde o gatilho, como §5.1 escreve. */
+  offsetLabel: string
+  messageName: string
+  /** As primeiras palavras do texto que vai sair, já compilado. */
+  amostra: string
+  messageAtiva: boolean
+}
+
 export type FluxoResumo = {
   id: string
   name: string
@@ -92,7 +109,16 @@ export type FluxoResumo = {
   cancelOn: string[]
   cancelKeyTemplate: string | null
   ritmo: string | null
-  passos: number
+  /**
+   * Os passos, e não quantos são.
+   *
+   * Para responder "o que meus fluxos mandam hoje?" eram nove idas e voltas —
+   * uma por fluxo, mais uma volta. E a resposta boa já existia uma tela
+   * adiante: `amostraDe` compila o corpo com o contato de exemplo desde
+   * sempre, e a tela do fluxo mostra o texto real de cada passo. O que faltava
+   * era a lista fazer a mesma pergunta.
+   */
+  passos: PassoNaLista[]
   /** Alguma mensagem do fluxo está pausada? A tela precisa avisar. */
   temMensagemPausada: boolean
 }
@@ -109,23 +135,37 @@ export async function listarFluxos(tx: Tx): Promise<FluxoResumo[]> {
   if (linhas.length === 0) return []
 
   const passos = await tx
-    .select({ flowId: flowSteps.flowId, messageId: flowSteps.messageId })
+    .select({
+      id: flowSteps.id,
+      flowId: flowSteps.flowId,
+      messageId: flowSteps.messageId,
+      position: flowSteps.position,
+      delaySeconds: flowSteps.delaySeconds,
+      sendAtLocal: flowSteps.sendAtLocal,
+    })
     .from(flowSteps)
     .where(inArray(flowSteps.flowId, linhas.map((l) => l.id)))
+    .orderBy(asc(flowSteps.position))
 
   const idsMensagens = [...new Set(passos.map((p) => p.messageId))]
   const mensagens = idsMensagens.length
     ? await tx
-        .select({ id: messages.id, active: messages.active })
+        .select({ id: messages.id, name: messages.name, body: messages.body, active: messages.active })
         .from(messages)
         .where(inArray(messages.id, idsMensagens))
     : []
 
-  const ativaPorId = new Map(mensagens.map((m) => [m.id, m.active]))
+  const porMensagem = new Map(mensagens.map((m) => [m.id, m]))
   const perfis = await mapaDeRitmos(tx, linhas.map((l) => l.jitterProfileId))
 
   return linhas.map((linha) => {
     const meus = passos.filter((p) => p.flowId === linha.id)
+
+    // A mesma cascata da tela do fluxo: o rótulo é o ACUMULADO desde o
+    // gatilho, não o atraso do passo. Dois passos de "+30 min" seguidos são
+    // "+30 min" e "+1 h" para quem lê, e é assim que §5.1 escreve.
+    const agenda = planejarCascata(meus, new Date(0))
+
     return {
       id: linha.id,
       name: linha.name,
@@ -134,8 +174,18 @@ export async function listarFluxos(tx: Tx): Promise<FluxoResumo[]> {
       cancelOn: linha.cancelOn,
       cancelKeyTemplate: linha.cancelKeyTemplate,
       ritmo: linha.jitterProfileId ? (perfis.get(linha.jitterProfileId) ?? null) : null,
-      passos: meus.length,
-      temMensagemPausada: meus.some((p) => ativaPorId.get(p.messageId) === false),
+      passos: meus.map((passo) => {
+        const mensagem = porMensagem.get(passo.messageId)
+        const marcado = agenda.find((a) => a.stepId === passo.id)
+
+        return {
+          offsetLabel: formatarOffset(marcado?.offsetSeconds ?? 0),
+          messageName: mensagem?.name ?? 'mensagem removida',
+          amostra: amostraDe(mensagem?.body ?? '', passo.id),
+          messageAtiva: mensagem?.active ?? false,
+        }
+      }),
+      temMensagemPausada: meus.some((p) => porMensagem.get(p.messageId)?.active === false),
     }
   })
 }

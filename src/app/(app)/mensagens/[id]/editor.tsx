@@ -247,22 +247,44 @@ export function EditorMensagem({
               />
             </Field>
 
-            <Field
-              label="Chave"
-              htmlFor={chaveId}
-              hint="Como a API se refere a esta mensagem. Letras minúsculas, números e _."
-            >
-              <Input
-                id={chaveId}
-                name="chave"
-                value={chave}
-                onChange={(e) => setChave(e.target.value)}
-                maxLength={60}
-                pattern="[a-z][a-z0-9_]*"
-                className="font-mono"
-                aria-describedby={fieldDescriptionId(chaveId)}
-              />
-            </Field>
+            {/*
+              A CHAVE SAI DO SEGUNDO LUGAR.
+
+              Era o segundo campo do editor, logo abaixo do nome, explicado
+              como "Como a API se refere a esta mensagem. Letras minúsculas,
+              números e _." — para quem toca uma banca de jogo do bicho e não
+              tem API nenhuma. E a chave é gerada sozinha na criação: o campo
+              pedia uma decisão que ninguém precisa tomar, no lugar mais
+              visível da tela, antes do texto que a pessoa veio escrever.
+
+              Continua editável, fechada, para quem integrar um dia — ela é
+              contrato com a API e com o CSV, e escondê-la de vez quebraria
+              quem já usa.
+            */}
+            <details className="rounded-lg border border-line px-3 py-2">
+              <summary className="cursor-pointer text-2xs text-ink-2 select-none">
+                Detalhes técnicos
+              </summary>
+
+              <div className="pt-3">
+                <Field
+                  label="Chave"
+                  htmlFor={chaveId}
+                  hint="Como a API e a exportação se referem a esta mensagem. Letras minúsculas, números e _."
+                >
+                  <Input
+                    id={chaveId}
+                    name="chave"
+                    value={chave}
+                    onChange={(e) => setChave(e.target.value)}
+                    maxLength={60}
+                    pattern="[a-z][a-z0-9_]*"
+                    className="font-mono"
+                    aria-describedby={fieldDescriptionId(chaveId)}
+                  />
+                </Field>
+              </div>
+            </details>
 
             <fieldset className="flex flex-col gap-1.5">
               <legend className="mb-1.5 text-2xs font-medium text-ink-2">Tipo</legend>

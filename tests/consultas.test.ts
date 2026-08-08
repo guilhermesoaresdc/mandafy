@@ -267,9 +267,35 @@ describe.skipIf(!habilitado)('Consultas das telas contra o Postgres', () => {
       const fluxo = lista.find((f) => f.id === FLUXO)
 
       expect(fluxo?.triggerEvent).toBe('order.created')
-      expect(fluxo?.passos).toBe(2)
+      expect(fluxo?.passos).toHaveLength(2)
       // Um fluxo ativo com mensagem pausada não envia nada e não avisa sozinho.
       expect(fluxo?.temMensagemPausada).toBe(true)
+    })
+
+    /*
+     * A LISTA MOSTRA O QUE VAI SAIR, e é isso que precisa ser conferido.
+     *
+     * Devolver só o nome da mensagem passaria neste arquivo e não responderia
+     * a pergunta que levou alguém à lista: "Boas-vindas" não diz se o texto
+     * ainda fala de rifa. E o rótulo de tempo precisa ser o ACUMULADO desde o
+     * gatilho — o mesmo que a tela do fluxo mostra —, senão a lista e o detalhe
+     * dariam números diferentes para a mesma cadência.
+     */
+    it('e cada passo vem com o tempo acumulado e o texto já compilado', async () => {
+      const lista = await comoUsuario(listarFluxos)
+      const fluxo = lista.find((f) => f.id === FLUXO)
+
+      expect(fluxo?.passos.map((p) => p.offsetLabel)).toEqual(['+5 min', '+25 min'])
+      expect(fluxo?.passos.map((p) => p.messageName)).toEqual(['Passo A', 'Passo B'])
+
+      // Compilado com o contato de exemplo: `{{nome}}` virou gente, e nenhuma
+      // chave sobrou na tela.
+      const primeira = fluxo?.passos[0]?.amostra ?? ''
+      expect(primeira).not.toContain('{{')
+      expect(primeira.length).toBeGreaterThan(0)
+
+      // A pausada continua marcada passo a passo, e não só no fluxo inteiro.
+      expect(fluxo?.passos.map((p) => p.messageAtiva)).toEqual([true, false])
     })
 
     it('o detalhe mostra o tempo ACUMULADO, não o do passo', async () => {
