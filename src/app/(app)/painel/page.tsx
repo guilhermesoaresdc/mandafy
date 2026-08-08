@@ -27,6 +27,8 @@ import {
 import { CHANNEL_COLOR_VAR, CHANNEL_LABELS, CHANNELS } from '@/db/schema/enums'
 import { requireUser, tenantOf } from '@/lib/auth/current'
 import { avaliarAlertas } from '@/lib/alertas'
+import { prontidaoDosCanais } from '@/lib/delivery/prontidao'
+import { TAREFAS, ultimaExecucao } from '@/lib/manutencao'
 import { cn, formatBRL, formatNumber, formatPercent } from '@/lib/utils'
 import { NoAr } from './no-ar'
 
@@ -82,7 +84,7 @@ function compararComOntem(hoje: number, ontem: number): { texto: string; tom: 'o
 export default async function PainelPage() {
   const user = await requireUser()
 
-  const { metricas, proximos, canais, instancias, noAr, movimento, funil } = await withTenant(
+  const { metricas, proximos, canais, instancias, noAr, movimento, funil, prontidao } = await withTenant(
     tenantOf(user),
     async (tx) => ({
       metricas: await metricasDoPainel(tx),
@@ -94,10 +96,32 @@ export default async function PainelPage() {
       // Só para quem administra: consultor não liga nem desliga fluxo (§9.4),
       // e mostrar-lhe um alerta que ele não pode resolver é ruído.
       noAr: user.isAdmin ? await resumoNoAr(tx) : null,
+      /*
+       * A pergunta "dá para enviar alguma coisa agora?" tinha resposta pronta
+       * desde sempre — `prontidaoDosCanais` devolve o motivo escrito em
+       * português — e era feita só dentro da tela de um fluxo. O painel, que é
+       * onde alguém abre quando desconfia que parou, não perguntava.
+       */
+      prontidao: user.isAdmin ? await prontidaoDosCanais(tx, user.orgId, CHANNELS) : null,
     }),
   )
 
-  const alertas = avaliarAlertas({ canais, instancias, naFila: metricas.naFila })
+  /*
+   * O batimento fica FORA da transação com contexto de organização: ele é
+   * global (uma linha em `system_state` para a instalação inteira), não tem
+   * `org_id`, e lê-lo lá dentro devolveria vazio sob RLS.
+   */
+  const batimento = user.isAdmin ? await ultimaExecucao(TAREFAS.horaria) : undefined
+
+  const alertas = avaliarAlertas({
+    canais,
+    instancias,
+    naFila: metricas.naFila,
+    vencidaDesde: metricas.vencidaDesde,
+    ...(prontidao ? { prontidao: [...prontidao.values()] } : {}),
+    ...(user.isAdmin ? { batimento } : {}),
+    noAr,
+  })
 
   const naBarra: EnvioNaBarra[] = proximos.map((e) => ({
     id: e.id,
@@ -119,7 +143,71 @@ export default async function PainelPage() {
   return (
     <SessionFrame title="Painel" description={`Operação de ${user.orgName}`}>
       <div className="flex flex-col gap-4">
-        {/* ── 1. O dia inteiro num bloco só ── */}
+        {/*
+          ── 1. O QUE IMPEDE O SISTEMA DE TRABALHAR ──
+
+          Vem ANTES dos números do dia, e a ordem é a mensagem: com nenhum
+          canal conectado ou o disparo parado, "Comprado R$ 0,00" não é um
+          resultado ruim, é uma tela que não tem o que medir. Ler oito zeros
+          antes de saber que nada pode sair é ler a resposta errada primeiro.
+
+          O bloco some sozinho quando não há o que resolver.
+        */}
+        {alertas.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Precisa de atenção</CardTitle>
+            </CardHeader>
+            <CardBody className="flex flex-col gap-2">
+              {alertas.map((alerta, i) => (
+                <div key={`${alerta.titulo}-${i}`} className="flex items-start gap-2">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'mt-1 size-1.5 shrink-0 rounded-full',
+                      alerta.nivel === 'critico' ? 'bg-fail' : 'bg-pending',
+                    )}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs text-ink">{alerta.titulo}</p>
+                    <p className="text-2xs text-ink-2">
+                      {alerta.acao}
+                      {/*
+                        O alerta leva para o lugar em vez de descrevê-lo. A
+                        frase antiga era "Abra o histórico filtrado por este
+                        canal" — uma instrução de navegação escrita à mão para
+                        uma tela que nem aceitava ser apontada.
+                      */}
+                      {alerta.href ? (
+                        <>
+                          {' '}
+                          <Link
+                            href={alerta.href}
+                            className="font-medium text-live underline-offset-2 hover:underline"
+                          >
+                            resolver
+                          </Link>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        ) : null}
+
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-xs font-medium text-ink">Próxima hora</h2>
+            <Link href="/historico" className="text-2xs text-ink-2 underline-offset-2 hover:underline">
+              ver o histórico
+            </Link>
+          </div>
+          <BarraDePulso envios={naBarra} />
+        </div>
+
+        {/* ── 2. O dia inteiro num bloco só ── */}
         <Card>
           <CardHeader>
             <CardTitle>Hoje</CardTitle>
@@ -208,42 +296,6 @@ export default async function PainelPage() {
             />
           </CardBody>
         </Card>
-
-        {/* ── 2. O que está prestes a acontecer ── */}
-        {alertas.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Precisa de atenção</CardTitle>
-            </CardHeader>
-            <CardBody className="flex flex-col gap-2">
-              {alertas.map((alerta, i) => (
-                <div key={`${alerta.titulo}-${i}`} className="flex items-start gap-2">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'mt-1 size-1.5 shrink-0 rounded-full',
-                      alerta.nivel === 'critico' ? 'bg-fail' : 'bg-pending',
-                    )}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs text-ink">{alerta.titulo}</p>
-                    <p className="text-2xs text-ink-2">{alerta.acao}</p>
-                  </div>
-                </div>
-              ))}
-            </CardBody>
-          </Card>
-        ) : null}
-
-        <div className="flex flex-col gap-2">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-xs font-medium text-ink">Próxima hora</h2>
-            <Link href="/historico" className="text-2xs text-ink-2 underline-offset-2 hover:underline">
-              ver o histórico
-            </Link>
-          </div>
-          <BarraDePulso envios={naBarra} />
-        </div>
 
         {/* ── 3. Para onde a coisa está indo ── */}
         <div className="grid gap-4 lg:grid-cols-2">

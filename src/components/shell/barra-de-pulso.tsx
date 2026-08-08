@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { CHANNEL_COLOR_VAR, CHANNEL_LABELS, type Channel } from '@/db/schema/enums'
 
 /**
@@ -32,6 +33,7 @@ const JANELA_MINUTOS = 60
 const ALTURA = 80
 
 export function BarraDePulso({ envios }: { envios: EnvioNaBarra[] }) {
+  const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [semAnimacao, setSemAnimacao] = useState(false)
 
@@ -41,6 +43,25 @@ export function BarraDePulso({ envios }: { envios: EnvioNaBarra[] }) {
     () => envios.map((e) => ({ ...e, quando: new Date(e.scheduledFor).getTime() })),
     [envios],
   )
+
+  /*
+   * A BARRA PARAVA DE DIZER A VERDADE COM A ABA ABERTA.
+   *
+   * O painel é `force-dynamic`: recalcula a cada requisição, e nada no cliente
+   * requisita de novo. Passada uma hora com a aba aberta — que é como esta tela
+   * é usada, num monitor de balcão —, os envios da "próxima hora" já saíram
+   * todos e a barra desenha "Nada agendado para a próxima hora." em cima de uma
+   * fila cheia. Não é lentidão: é uma tela que afirma o contrário do que está
+   * acontecendo, e é a pior das duas.
+   *
+   * `router.refresh()` e não uma rota SSE nova: a tela muda de minuto em
+   * minuto, não de segundo em segundo. Um contrato de eventos e uma rota a
+   * mais para ganhar 60 segundos de frescor é preço que não se paga.
+   */
+  useEffect(() => {
+    const relogio = setInterval(() => router.refresh(), 60_000)
+    return () => clearInterval(relogio)
+  }, [router])
 
   useEffect(() => {
     const consulta = window.matchMedia('(prefers-reduced-motion: reduce)')

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gte, inArray, lte, min, sql } from 'drizzle-orm'
 import type { Tx } from '@/db'
 import { contacts, events, messages, notificationDailyStats, notifications } from '@/db/schema'
 import { CHANNELS, type Channel, type NotificationStatus } from '@/db/schema/enums'
@@ -18,6 +18,8 @@ export type MetricasPainel = {
   /** Entregues ÷ enviadas. `null` quando não houve envio — 0% mentiria. */
   taxaEntrega: number | null
   naFila: number
+  /** A hora marcada da mensagem vencida mais antiga que continua esperando. */
+  vencidaDesde: Date | null
   falhas24h: number
   recuperadoCents: number
 
@@ -112,6 +114,25 @@ export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<Metr
     .from(notifications)
     .where(inArray(notifications.status, ['queued', 'scheduled']))
 
+  /*
+   * A VENCIDA MAIS ANTIGA.
+   *
+   * "500 na fila" não distingue uma operação movimentada de uma operação
+   * parada: a fila cheia é normal às 19h de um sábado de sorteio. O que não é
+   * normal é uma mensagem cuja hora marcada já passou continuar esperando —
+   * isso só acontece quando o batimento não está vazando a fila, e é o número
+   * que separa "tem muita coisa para sair" de "não está saindo nada".
+   */
+  const [vencida] = await tx
+    .select({ quando: min(notifications.scheduledFor) })
+    .from(notifications)
+    .where(
+      and(
+        inArray(notifications.status, ['queued', 'scheduled']),
+        lte(notifications.scheduledFor, agora),
+      ),
+    )
+
   const [falhas] = await tx
     .select({ total: count() })
     .from(notifications)
@@ -128,6 +149,7 @@ export async function metricasDoPainel(tx: Tx, agora = new Date()): Promise<Metr
     enviadasHoje: saiuHoje,
     taxaEntrega: saiuHoje === 0 ? null : confirmado / saiuHoje,
     naFila: fila?.total ?? 0,
+    vencidaDesde: vencida?.quando ?? null,
     falhas24h: falhas?.total ?? 0,
     recuperadoCents: await recuperado(tx, agora),
     ...negocio,
