@@ -19,6 +19,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+
+    /*
+     * Ambiente mínimo antes de qualquer suíte: ver tests/ambiente.ts. Sem ele,
+     * todo teste que alcance uma função que chame `serverEnv()` morre num erro
+     * de configuração antes de exercitar o que veio testar.
+     */
+    setupFiles: ['tests/ambiente.ts'],
     // Testes que tocam Postgres/Redis são marcados com `describe.skipIf(!process.env.TEST_DATABASE_URL)`
     globals: false,
 

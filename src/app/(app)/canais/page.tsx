@@ -68,6 +68,8 @@ export default async function CanaisPage() {
             provider={canal.provider}
             configurado={canal.configurado}
             ativo={canal.ativo}
+            desligadoPeloSistema={canal.desligadoPeloSistema}
+            motivoDoDesligamento={canal.motivoDoDesligamento}
             descricao={DESCRICOES[canal.canal]}
             ajustes={
               /*

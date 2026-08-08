@@ -29,6 +29,10 @@ export type EstadoCanal = {
    * que já foi enviado. A tela é de admin (§9.4).
    */
   webhookToken: string | null
+  /** Quando o disjuntor derrubou o canal. Nulo = se está desligado, foi alguém. */
+  desligadoPeloSistema: Date | null
+  /** O que o provedor respondeu na falha que derrubou — para a tela explicar. */
+  motivoDoDesligamento: string | null
 }
 
 export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
@@ -40,6 +44,8 @@ export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
       webhookToken: channelConfigs.webhookToken,
       active: channelConfigs.active,
       isDefault: channelConfigs.isDefault,
+      disabledAt: channelConfigs.disabledAt,
+      disabledReason: channelConfigs.disabledReason,
     })
     .from(channelConfigs)
 
@@ -53,6 +59,14 @@ export async function estadoDosCanais(tx: Tx): Promise<EstadoCanal[]> {
       configurado: Boolean(linha?.credentials && linha.credentials.length > 0),
       ativo: linha?.active ?? false,
       webhookToken: linha?.webhookToken ?? null,
+      /*
+       * Desligado por alguém e desligado pelo disjuntor são a mesma coluna
+       * `active` e duas situações opostas (§8.1). Só `disabledAt` distingue —
+       * e sem a distinção o cartão diria "você desligou este canal" para quem
+       * não desligou nada.
+       */
+      desligadoPeloSistema: linha?.disabledAt ?? null,
+      motivoDoDesligamento: linha?.disabledReason ?? null,
     }
   })
 }

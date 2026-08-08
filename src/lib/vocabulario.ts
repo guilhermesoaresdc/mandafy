@@ -1,4 +1,4 @@
-import { CANONICAL_EVENTS, type CanonicalEvent } from '@/db/schema/enums'
+import { CANONICAL_EVENTS, CHANNEL_LABELS, type CanonicalEvent, type Channel } from '@/db/schema/enums'
 import { formatarData, formatarHora, formatarMoeda } from '@/lib/messages/variables'
 import { formatPhoneBR } from '@/lib/phone'
 
@@ -361,4 +361,27 @@ export function resumoDoEvento(dados: unknown): string {
     .slice(0, 3)
     .map((c) => c.valor)
     .join(' · ')
+}
+
+/**
+ * O canal caiu sozinho — a frase que a tela mostra (§8.1, §11.7).
+ *
+ * Mora AQUI, e não em `delivery/disjuntor.ts`, por uma razão de peso literal:
+ * o cartão de canal é `use client`, e importar o disjuntor arrastaria o Drizzle
+ * e o esquema inteiro para o pacote do navegador por causa de uma frase. O
+ * orçamento de §13.1 é requisito, não recomendação.
+ *
+ * A pessoa não precisa saber o que é um "disjuntor". Precisa saber que o canal
+ * parou, por quê, e que voltar é um clique.
+ */
+export function explicarDesligamento(
+  canal: Channel,
+  motivo: string | null,
+  falhas = 2,
+): string {
+  const nome = CHANNEL_LABELS[canal]
+  const inicio = `${nome} falhou ${falhas} vezes seguidas e foi desligado`
+  return motivo
+    ? `${inicio}: ${motivo}. Verifique e ligue de novo.`
+    : `${inicio}. Verifique e ligue de novo.`
 }

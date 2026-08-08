@@ -69,6 +69,18 @@ jobs:
 
       # Vale mais que qualquer teste unitário do schema: prova que o SQL
       # escrito à mão aplica de ponta a ponta, com partições e RLS.
+      # O papel da aplicação precisa existir ANTES das migrations: os GRANT de
+      # 0010_rls.sql são condicionais (`IF EXISTS mandafy_app`), então sem ele
+      # elas aplicam em silêncio e o RLS fica sem ninguém a quem se aplicar.
+      - name: Criar o papel da aplicação
+        env:
+          PGPASSWORD: mandafy
+        run: |
+          psql -h localhost -U mandafy -d mandafy -tAc \
+            "SELECT 1 FROM pg_roles WHERE rolname = 'mandafy_app'" | grep -q 1 \
+            || psql -h localhost -U mandafy -d mandafy -v ON_ERROR_STOP=1 -c \
+              "CREATE ROLE mandafy_app LOGIN PASSWORD 'mandafy_app'"
+
       - name: Aplicar migrations
         run: npm run db:migrate
         env:
@@ -92,3 +104,16 @@ jobs:
           DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
           SEED_ADMIN_EMAIL: admin@mandafy.local
           SEED_ADMIN_PASSWORD: senha-de-teste-ci
+
+      # AS SUÍTES QUE TOCAM BANCO — e que nunca rodaram no CI.
+      #
+      # Elas se pulam sozinhas sem `TEST_DATABASE_URL*` (`describe.skipIf`), e o
+      # `npm test` do primeiro job não tem banco nenhum: são 16 arquivos
+      # ignorados, entre eles cancelamento por chave (§5.1, "a lógica mais
+      # crítica do sistema" pelo próprio CLAUDE.md), o RLS por consultor e o
+      # disjuntor de canal. Passavam por verdes por não terem sido executadas.
+      - name: Testes que precisam de banco
+        run: npm test
+        env:
+          TEST_DATABASE_URL_ADMIN: postgresql://mandafy:mandafy@localhost:5432/mandafy
+          TEST_DATABASE_URL: postgresql://mandafy_app:mandafy_app@localhost:5432/mandafy
