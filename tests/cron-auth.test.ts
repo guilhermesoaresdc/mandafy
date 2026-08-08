@@ -24,28 +24,27 @@ async function chamar(headers: Record<string, string>) {
 }
 
 /**
- * O resto do ambiente, com valores descartáveis.
+ * O ambiente mínimo vem de `tests/ambiente.ts` (setupFiles), e NÃO daqui.
  *
- * `autorizar` lê o segredo por `serverEnv()`, que valida o ambiente INTEIRO de
- * uma vez — então faltar `DATABASE_URL` derrubava os sete casos deste arquivo
- * com um erro de configuração, antes de a rota chegar a decidir qualquer coisa.
- * O `npm test` do CI roda sem `.env`, e era ali que a suíte vinha vermelha.
+ * Este arquivo já teve um `AMBIENTE_MINIMO` próprio, com
+ * `DATABASE_URL: 'postgres://ninguem:ninguem@…/nada'` — um endereço inválido de
+ * propósito, porque nenhum caso deste arquivo abre banco. Era verdade, e ainda
+ * assim quebrou o CI inteiro no dia em que as suítes de banco passaram a rodar.
  *
- * Nada aqui é usado: este arquivo não abre banco, fila nem cifra coisa alguma.
- * São só os campos que o esquema exige para deixar `serverEnv()` passar.
+ * `vi.stubEnv` mexe no ambiente do PROCESSO, e o `@/db` guarda o pool num
+ * singleton de módulo criado na primeira importação. Com o endereço envenenado
+ * no ar, o pool nascia apontando para um papel que não existe — e o `postgres`
+ * só se conecta na primeira consulta, então a falha não aparecia aqui: aparecia
+ * dois arquivos adiante, num `beforeEach` que estourava o tempo tentando falar
+ * com um banco inexistente.
+ *
+ * A lição, e o motivo de o comentário ser longo: um valor falso só é inofensivo
+ * enquanto ninguém o usa, e "ninguém usa" é uma afirmação sobre o resto da
+ * suíte, não sobre este arquivo.
  */
-const AMBIENTE_MINIMO = {
-  APP_URL: 'https://exemplo.test',
-  SESSION_SECRET: 'x'.repeat(64),
-  ENCRYPTION_KEY: 'a'.repeat(64),
-  DATABASE_URL: 'postgres://ninguem:ninguem@127.0.0.1:5432/nada',
-  REDIS_URL: 'redis://127.0.0.1:6379',
-}
-
 describe('§7.1 — autenticação do batimento', () => {
   beforeEach(() => {
     vi.resetModules()
-    for (const [chave, valor] of Object.entries(AMBIENTE_MINIMO)) vi.stubEnv(chave, valor)
     process.env.CRON_SECRET = SEGREDO
   })
 

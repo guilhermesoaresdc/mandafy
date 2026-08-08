@@ -30,8 +30,14 @@ process.env.REDIS_URL ??= 'redis://127.0.0.1:6379'
 /*
  * `DATABASE_URL` acompanha o endereço de teste quando ele existe: as suítes de
  * banco abrem a própria conexão, mas o código sob teste pode chamar `db` do
- * módulo, e apontá-lo para um banco inexistente trocaria um erro de
- * configuração por um erro de conexão — mais confuso, não menos.
+ * módulo, e apontá-lo para outro lugar trocaria um erro de configuração por um
+ * erro de conexão — mais confuso, não menos.
+ *
+ * E na falta dele, a porta 1, onde nada escuta. Um endereço PLAUSÍVEL —
+ * `127.0.0.1:5432` com um papel que não existe — foi o que quebrou o CI: o
+ * pool do `@/db` nasceu apontando para lá, o `postgres` só se conecta na
+ * primeira consulta, e a falha apareceu dois arquivos adiante num `beforeEach`
+ * que estourou o tempo. Recusa de conexão é instantânea e diz o que é.
  */
 process.env.DATABASE_URL ??=
-  process.env.TEST_DATABASE_URL ?? 'postgres://ninguem:ninguem@127.0.0.1:5432/nada'
+  process.env.TEST_DATABASE_URL ?? 'postgres://sem-banco@127.0.0.1:1/sem-banco'
