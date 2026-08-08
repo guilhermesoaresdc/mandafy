@@ -24,6 +24,7 @@
     "db:modelos": "node --env-file-if-exists=.env --import tsx src/db/reaplicar-modelos-cli.ts",
     "crm:leads-do-webhook": "node --env-file-if-exists=.env --import tsx src/db/leads-do-webhook-cli.ts",
     "fumaca": "node scripts/fumaca.mjs",
+    "celular": "node scripts/celular.mjs",
     "db:embutir": "node scripts/embutir-migrations.mjs",
     "prebuild": "node scripts/embutir-migrations.mjs",
     "predev": "node scripts/embutir-migrations.mjs",

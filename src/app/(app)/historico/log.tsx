@@ -344,7 +344,68 @@ export function LogAoVivo({
           </p>
         ) : (
           <div className="max-h-[60vh] overflow-y-auto">
-            <table className="w-full border-collapse font-mono text-2xs">
+            {/*
+              ── No celular a tabela vira lista ──
+
+              As seis colunas somam 512px de largura fixa. Num aparelho de 375px
+              apareciam as três primeiras — "Quando", "Canal" e metade de "Para
+              quem". SITUAÇÃO E MOTIVO, as duas que respondem a pergunta que traz
+              alguém a esta tela, ficavam além da borda direita.
+
+              Alcançáveis, para ser exato: `overflow-y-auto` faz o `overflow-x`
+              computar como `auto`, então dava para arrastar de lado dentro da
+              lista. Só que nada na tela dizia isso. Uma rolagem horizontal
+              escondida dentro de uma lista que rola na vertical, sem barra à
+              vista no toque, é um recurso que existe para quem já sabe que ele
+              está lá — e quem já sabe não precisava dele.
+
+              Cada linha vira um bloco de três andares, na ordem em que a
+              pergunta é feita: o que aconteceu, com quem, e por quê.
+            */}
+            <ul className="divide-y divide-line/50 md:hidden">
+              {visiveis.map((linha) => {
+                const detalhe = latenciaTexto(linha)
+                return (
+                  <li key={linha.id}>
+                    <button
+                      type="button"
+                      onClick={() => setAberta(linha)}
+                      className="w-full px-3 py-2 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className={cn('text-xs font-medium', TOM[linha.status])}>
+                          {MARCA[linha.status]} {NOTIFICATION_STATUS_LABELS[linha.status]}
+                        </span>
+                        <span
+                          className="ml-auto shrink-0 font-mono text-2xs"
+                          style={{ color: `var(${CHANNEL_COLOR_VAR[linha.channel]})` }}
+                        >
+                          {CHANNEL_SHORT[linha.channel]}
+                        </span>
+                        <span className="shrink-0 font-mono text-2xs text-pending tabular-nums">
+                          {dataEHora(linha.createdAt)}
+                        </span>
+                      </div>
+
+                      <p className="truncate text-xs text-ink">{linha.contactName ?? '—'}</p>
+
+                      {/*
+                        O motivo NÃO trunca: "número não tem WhatsApp" cortado em
+                        "número não tem…" devolve a pessoa ao lugar de onde ela
+                        veio. O nome da mensagem, sim — ele é referência, não
+                        resposta.
+                      */}
+                      <p className="text-2xs text-pending">
+                        <span className="font-mono">{linha.messageKey ?? '—'}</span>
+                        {detalhe ? <span className="text-ink-2"> · {detalhe}</span> : null}
+                      </p>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+
+            <table className="hidden w-full border-collapse font-mono text-2xs md:table">
               <caption className="sr-only">Envios dos últimos 3 dias</caption>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-surface-2 text-left">
