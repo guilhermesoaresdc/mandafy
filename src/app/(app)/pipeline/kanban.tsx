@@ -191,7 +191,13 @@ export function Kanban({ colunas }: { colunas: Coluna[] }) {
                       <select
                         value={coluna.stageId}
                         onChange={(e) => mover(cartao.id, e.target.value)}
-                        className="w-full rounded border border-line bg-surface-2 px-1 py-0.5 text-2xs text-ink-2 outline-none focus-visible:border-ink"
+                        /*
+                          `py-1.5` no telefone: este seletor É o jeito de mover
+                          um lead no celular — arrastar não funciona por toque —
+                          e apontar alguém para um alvo de 29px de altura é
+                          apontar para o alvo errado.
+                        */
+                        className="w-full rounded border border-line bg-surface-2 px-1 py-1.5 text-2xs text-ink-2 outline-none focus-visible:border-ink md:py-0.5"
                       >
                         {visiveis.map((c) => (
                           <option key={c.stageId} value={c.stageId}>

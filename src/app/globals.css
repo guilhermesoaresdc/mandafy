@@ -173,3 +173,34 @@
   background: transparent;
   flex: none;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   O zoom que o iPhone dá sozinho
+
+   O Safari amplia a página inteira quando um campo editável com letra menor
+   que 16px recebe o foco — e NÃO desfaz ao sair. Tocar na busca de leads
+   deixava a tela ampliada e torta até fechar o app. É regra do iOS, não erro
+   de layout, e não existe atributo de viewport que a desligue: o
+   `maximum-scale=1` foi ignorado a partir do iOS 10, de propósito, por
+   acessibilidade.
+
+   A interface usa `text-xs` (12px) e `text-2xs` (10px) nos campos, então isto
+   valia para TODAS as telas com formulário — busca do histórico, filtro de
+   leads, editor de mensagem, ficha do lead, os seletores de etapa do kanban.
+
+   Aqui e não em cada componente: são 19 campos crus além do primitivo `Input`,
+   e a que vier depois nasceria com o mesmo defeito. A regra fica FORA de
+   `@layer` de propósito — no Tailwind v4 as utilitárias moram em
+   `@layer utilities`, e estilo sem camada vence estilo em camada, então isto
+   passa por cima de `text-xs` sem precisar de `!important`.
+
+   Só abaixo de `md`: no computador não existe esse zoom, e a densidade da
+   tabela depende da letra pequena.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (width < 48rem) {
+  input:not([type='checkbox']):not([type='radio']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

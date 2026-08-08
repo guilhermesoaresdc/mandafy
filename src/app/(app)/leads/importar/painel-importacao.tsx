@@ -170,7 +170,14 @@ export function PainelImportacao() {
             type="file"
             accept=".csv,text/csv,text/plain"
             onChange={(e) => void escolher(e.target.files?.[0])}
-            className="text-2xs text-ink-2 file:mr-3 file:h-8 file:rounded-lg file:border file:border-line file:bg-surface file:px-3 file:text-2xs file:font-medium file:text-ink hover:file:bg-surface-2"
+            /*
+              `w-full`: um campo de arquivo tem largura intrínseca — o botão
+              mais o nome do arquivo escolhido — e sem limite ele estourava o
+              quadro em 19px depois que a letra dos campos subiu para 16px no
+              celular. Preso a 100%, o botão fica do tamanho que é e o nome
+              ocupa o que sobra.
+            */
+            className="w-full text-2xs text-ink-2 file:mr-3 file:h-8 file:rounded-lg file:border file:border-line file:bg-surface file:px-3 file:text-2xs file:font-medium file:text-ink hover:file:bg-surface-2"
           />
         </CardBody>
       </Card>

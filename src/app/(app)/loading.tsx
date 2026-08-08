@@ -23,7 +23,7 @@ export default function Carregando() {
     <main className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-live="polite">
       <span className="sr-only">Carregando…</span>
 
-      <header className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5 pb-4">
+      <header className="flex shrink-0 items-start justify-between gap-4 px-4 pt-4 pb-3 md:px-6 md:pt-5 md:pb-4">
         <div className="flex flex-col gap-2">
           {/* Mesma altura do h1 e do parágrafo do SessionFrame: sem salto. */}
           <Skeleton className="h-5 w-40" />
@@ -31,7 +31,7 @@ export default function Carregando() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 md:px-6">
         <div className="flex flex-col gap-4">
           <Card>
             <CardBody className="flex flex-col gap-3">
