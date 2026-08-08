@@ -1,4 +1,10 @@
-import { CANONICAL_EVENTS, CHANNEL_LABELS, type CanonicalEvent, type Channel } from '@/db/schema/enums'
+import {
+  CANONICAL_EVENTS,
+  CHANNEL_LABELS,
+  INTERNAL_EVENTS,
+  type CanonicalEvent,
+  type Channel,
+} from '@/db/schema/enums'
 import { formatarData, formatarHora, formatarMoeda } from '@/lib/messages/variables'
 import { formatPhoneBR } from '@/lib/phone'
 
@@ -437,4 +443,37 @@ export const MOTIVO_LABELS: Record<string, string> = {
 export function explicarMotivo(codigo: string | null | undefined): string {
   if (!codigo) return ''
   return MOTIVO_LABELS[codigo] ?? codigo
+}
+
+/**
+ * O Mandafy gera este aviso sozinho? (§5, §11.7)
+ *
+ * `INTERNAL_EVENTS` está descrito no esquema como "gerados internamente pelo
+ * Mandafy, nunca pela plataforma" — e NADA no sistema os gera. `processarEvento`
+ * é chamado de um lugar só, `ingest/normalize.ts`, ou seja: só quando a
+ * plataforma manda webhook.
+ *
+ * O efeito na tela é cruel com quem opera. Ele liga "Reativação 7 dias", espera,
+ * nada acontece, e o painel informa "o evento nunca chegou" — apontando a culpa
+ * para a plataforma dele, que está sã. O sistema sabia desde o começo que aquele
+ * fluxo não tinha como rodar.
+ *
+ * Fazer o gerador é obra grande: varredura periódica, marcação para não
+ * reemitir todo dia, migration e um caminho de teste que não existe. Dizer a
+ * verdade custa uma frase.
+ *
+ * Não é "nunca dispara", e a diferença importa: uma plataforma PODE mapear um
+ * evento dela para `contact.first_purchase`, e aí ele chega. A frase certa é
+ * que o Mandafy não o produz por conta própria.
+ */
+export function ehEventoQueOMandafyNaoGera(tipo: string): boolean {
+  return (INTERNAL_EVENTS as readonly string[]).includes(tipo)
+}
+
+/** A frase que a tela mostra ao recusar a ativação de um fluxo assim. */
+export function porQueNaoDispara(tipo: string): string {
+  return (
+    `Este fluxo depende de "${descreverEvento(tipo).nome}", um aviso que o Mandafy ` +
+    'ainda não gera sozinho. Ele só roda se a sua plataforma mandar esse evento pelo webhook.'
+  )
 }

@@ -173,6 +173,8 @@ export default async function FluxoPage({ params }: { params: Promise<{ id: stri
 
         <ConfigFluxo
           id={fluxo.id}
+          triggerEvent={fluxo.triggerEvent}
+          cancelOn={fluxo.cancelOn}
           nome={fluxo.name}
           cancelKeyTemplate={fluxo.cancelKeyTemplate}
           precisaDeChave={fluxo.cancelOn.length > 0}

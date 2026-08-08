@@ -1,14 +1,14 @@
 'use server'
 
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { withTenant } from '@/db'
 import { buscarFluxo } from '@/db/queries/flows'
 import { seedFlows } from '@/db/seed-flows'
 import { semearRitmos } from '@/db/seed-org'
-import { flows, flowSteps, messages, messageVariants } from '@/db/schema'
-import { CHANNELS } from '@/db/schema/enums'
+import { events, flows, flowSteps, messages, messageVariants } from '@/db/schema'
+import { CANONICAL_EVENTS, CHANNELS } from '@/db/schema/enums'
 import { chaveEmUso } from '@/db/queries/messages'
 import { propagar } from '@/lib/messages/sync'
 import { requireAdmin, tenantOf } from '@/lib/auth/current'
@@ -17,6 +17,8 @@ import { createLogger } from '@/lib/logger'
 import { montarChave, variaveisDaChave } from '@/lib/flows/cancel-key'
 import { formatarHorario, lerAtraso, lerHorario } from '@/lib/flows/schedule'
 import { CONTATO_EXEMPLO } from '@/lib/messages/exemplo'
+import { ehEventoQueOMandafyNaoGera } from '@/lib/vocabulario'
+import { redirect } from 'next/navigation'
 
 /** Fluxos (§5). */
 
@@ -90,6 +92,37 @@ export async function alternarFluxoAction(formData: FormData): Promise<void> {
   if (!id) return
 
   await withTenant(tenantOf(user), async (tx) => {
+    /*
+     * LIGAR UM FLUXO QUE NÃO TEM COMO RODAR É PIOR QUE NÃO LIGAR.
+     *
+     * `INTERNAL_EVENTS` está descrito no esquema como "gerados internamente
+     * pelo Mandafy" — e nada no sistema os gera: `processarEvento` só é chamado
+     * pela ingestão do webhook. Quem liga "Reativação 7 dias" espera, nada
+     * acontece, e o painel diz "o evento nunca chegou" — apontando a culpa para
+     * a plataforma dele, que está sã.
+     *
+     * A recusa vale só quando NENHUM evento desse tipo chegou: uma plataforma
+     * pode mapear um evento dela para `contact.first_purchase`, e nesse caso o
+     * fluxo roda de verdade. Recusar sem olhar seria trocar uma mentira por
+     * outra.
+     */
+    if (ativar) {
+      const [fluxo] = await tx
+        .select({ triggerEvent: flows.triggerEvent })
+        .from(flows)
+        .where(and(eq(flows.id, id), eq(flows.orgId, user.orgId)))
+        .limit(1)
+
+      if (fluxo && ehEventoQueOMandafyNaoGera(fluxo.triggerEvent)) {
+        const [chegou] = await tx
+          .select({ total: count() })
+          .from(events)
+          .where(eq(events.type, fluxo.triggerEvent))
+
+        if ((chegou?.total ?? 0) === 0) return
+      }
+    }
+
     await tx
       .update(flows)
       .set({ active: ativar, updatedAt: new Date() })
@@ -100,12 +133,64 @@ export async function alternarFluxoAction(formData: FormData): Promise<void> {
   revalidatePath(`/fluxos/${id}`)
 }
 
+const novoSchema = z.object({
+  nome: z.string().trim().min(2, 'Dê um nome ao fluxo.').max(80),
+  triggerEvent: z.enum(CANONICAL_EVENTS),
+})
+
+/**
+ * Cria um fluxo vazio.
+ *
+ * Nasce PAUSADO e sem passo nenhum: um fluxo que já começa ativo dispararia no
+ * primeiro evento com zero mensagens, e "criei e não aconteceu nada" seria
+ * tecnicamente correto e completamente inútil como resposta.
+ */
+export async function criarFluxoAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin()
+  assertCan(user, 'fluxos.gerenciar')
+
+  const parsed = novoSchema.safeParse({
+    nome: formData.get('nome'),
+    triggerEvent: formData.get('triggerEvent'),
+  })
+  if (!parsed.success) return
+
+  const [criado] = await withTenant(tenantOf(user), (tx) =>
+    tx
+      .insert(flows)
+      .values({
+        orgId: user.orgId,
+        name: parsed.data.nome,
+        triggerEvent: parsed.data.triggerEvent,
+        active: false,
+      })
+      .returning({ id: flows.id }),
+  )
+
+  revalidatePath('/fluxos')
+  if (criado) redirect(`/fluxos/${criado.id}`)
+}
+
 const configSchema = z.object({
   id: z.uuid(),
   nome: z.string().trim().min(2, 'Dê um nome ao fluxo.').max(80),
   cancelKeyTemplate: z.string().trim().max(200),
   janelaLigada: z.coerce.boolean(),
   maxPorDia: z.coerce.number().int().min(1).max(50),
+  /*
+   * O GATILHO E O QUE CANCELA CHEGAM AO SERVIDOR.
+   *
+   * Não estavam no schema, então não havia como mudá-los: o evento era escrito
+   * uma vez pelo seed e virava imutável. Sete dos quinze eventos canônicos não
+   * tinham fluxo e nunca teriam, e o botão "Trazer os nove fluxos prontos" vive
+   * dentro do estado vazio — some depois do primeiro clique, e não havia como
+   * criar o décimo.
+   *
+   * `cancelOn` é o "combinar com outro evento" pedido, e cabe no motor de hoje:
+   * `run.ts` já lê `cancel_on` e cancela por chave (§5.1).
+   */
+  triggerEvent: z.enum(CANONICAL_EVENTS),
+  cancelOn: z.array(z.enum(CANONICAL_EVENTS)),
 })
 
 export async function salvarFluxoAction(
@@ -121,6 +206,10 @@ export async function salvarFluxoAction(
     cancelKeyTemplate: formData.get('cancelKeyTemplate') ?? '',
     janelaLigada: formData.get('janelaLigada') === 'on',
     maxPorDia: formData.get('maxPorDia') ?? 4,
+    triggerEvent: formData.get('triggerEvent'),
+    // `getAll`: são caixas de seleção com o mesmo nome, e `get` traria só a
+    // primeira — o fluxo passaria a cancelar por um evento de três marcados.
+    cancelOn: formData.getAll('cancelOn').map(String),
   })
   if (!parsed.success) {
     return { erro: parsed.error.issues[0]?.message ?? 'Dados inválidos.' }
@@ -140,7 +229,7 @@ export async function salvarFluxoAction(
        * envios e nada consegue pará-los. Melhor recusar a configuração do que
        * deixar a pessoa descobrir pelo cliente que já pagou.
        */
-      if (completo.fluxo.cancelOn.length > 0 && !modelo) {
+      if (dados.cancelOn.length > 0 && !modelo) {
         return {
           erro: 'Este fluxo cancela envios, então precisa de uma chave. Sem ela, nada segura os agendamentos.',
         }
@@ -166,6 +255,8 @@ export async function salvarFluxoAction(
         .update(flows)
         .set({
           name: dados.nome,
+          triggerEvent: dados.triggerEvent,
+          cancelOn: dados.cancelOn,
           cancelKeyTemplate: modelo,
           quietHoursEnabled: dados.janelaLigada,
           maxPerContactPerDay: dados.maxPorDia,

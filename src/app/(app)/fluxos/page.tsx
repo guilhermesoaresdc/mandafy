@@ -13,8 +13,13 @@ import {
 } from "@/components/ui";
 import { requireAdmin, tenantOf } from "@/lib/auth/current";
 import { alternarFluxoAction, criarFluxosModeloAction } from "./actions";
-import { descreverEvento } from "@/lib/vocabulario";
-import { cn } from '@/lib/utils'
+import {
+  descreverEvento,
+  ehEventoQueOMandafyNaoGera,
+  porQueNaoDispara,
+} from "@/lib/vocabulario";
+import { cn } from "@/lib/utils";
+import { NovoFluxo } from "./novo-fluxo";
 
 export const metadata: Metadata = { title: "Fluxos · Mandafy" };
 export const dynamic = "force-dynamic";
@@ -36,6 +41,7 @@ export default async function FluxosPage() {
     <SessionFrame
       title="Fluxos"
       description="O que dispara, quando sai, e o que faz parar. Os eventos chegam da sua plataforma — o endereço de webhook fica em Configurações → Plataformas."
+      actions={<NovoFluxo />}
     >
       {lista.length === 0 ? (
         /*
@@ -80,6 +86,15 @@ export default async function FluxosPage() {
                       {fluxo.temMensagemPausada ? (
                         <Badge tone="fail">mensagem pausada</Badge>
                       ) : null}
+                      {/*
+                        Cinco dos quinze eventos canônicos o Mandafy não produz
+                        sozinho. Quem liga um fluxo desses espera, nada
+                        acontece, e o painel informa "o evento nunca chegou" —
+                        apontando a culpa para a plataforma dele, que está sã.
+                      */}
+                      {ehEventoQueOMandafyNaoGera(fluxo.triggerEvent) ? (
+                        <Badge tone="pending">ainda não dispara</Badge>
+                      ) : null}
                     </div>
 
                     {/*
@@ -110,7 +125,21 @@ export default async function FluxosPage() {
                       name="ativar"
                       value={fluxo.active ? "0" : "1"}
                     />
-                    <Button type="submit" variant="ghost" size="sm">
+                    <Button
+                      type="submit"
+                      variant="ghost"
+                      size="sm"
+                      disabled={
+                        !fluxo.active &&
+                        ehEventoQueOMandafyNaoGera(fluxo.triggerEvent)
+                      }
+                      title={
+                        !fluxo.active &&
+                        ehEventoQueOMandafyNaoGera(fluxo.triggerEvent)
+                          ? porQueNaoDispara(fluxo.triggerEvent)
+                          : undefined
+                      }
+                    >
                       {fluxo.active ? "Pausar" : "Ativar"}
                     </Button>
                   </form>
